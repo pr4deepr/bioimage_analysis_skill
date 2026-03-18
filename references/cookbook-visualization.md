@@ -6,170 +6,124 @@ matplotlib is the first-class fallback (always available, publication-quality).
 
 ---
 
-## napari Launch & Verification
+## napari Setup & Connection
 
-### Install napari-mcp
+napari-mcp must be **registered as an MCP server in Claude Code** — not just launched as
+a subprocess. Simply running `python -m napari_mcp` does NOT make MCP tools available.
 
-Read STATE.md to find the viewer env Python path. Install into that env.
+### Step 1: Check if napari-mcp is already registered
+
+Use the Bash tool to check existing MCP servers:
+
+```bash
+claude mcp list
+```
+
+If `napari` appears in the list → skip to Step 3 (verify connection).
+
+### Step 2: Install and register napari-mcp
+
+This is a two-part process: install the package, then register the MCP server.
+
+**Install napari-mcp into the napari environment:**
+
+```bash
+# Use the Python from the napari environment
+{viewer_python} -m pip install napari-mcp
+```
+
+If pip fails (corporate/HPC network):
+- Try: `conda install -c conda-forge napari-mcp`
+- Or: download wheel from PyPI, then `pip install napari_mcp-*.whl`
+- If all fail: proceed with matplotlib, update STATE.md `fallback: matplotlib`
+
+**Check napari version compatibility:**
+
+```bash
+{viewer_python} -c "import napari; print(napari.__version__)"
+```
+
+If napari < 0.5.0, warn the user: napari-mcp may not work. Suggest upgrading.
+
+**Register napari-mcp as an MCP server in Claude Code:**
+
+```bash
+claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp
+```
+
+Where `{viewer_python}` is the **full path** to the Python executable in the napari
+environment (e.g., `C:/Users/Pradeep/.conda/envs/napari-lattice/python.exe`).
+
+**Important:** Use the full absolute path to the Python executable, not just `python`.
+This ensures Claude Code uses the correct environment regardless of PATH settings.
+
+After registering, the MCP tools become available in the current session. No restart
+needed — Claude Code picks up new MCP servers dynamically.
+
+### Step 3: Verify connection
+
+**The proof of connection is a successful MCP tool call.** Use the `ToolSearch` tool
+to check if napari-mcp tools are available:
+
+```
+ToolSearch: query="napari" max_results=5
+```
+
+If napari tools appear (e.g., `session_information`, `add_image`, `add_labels`):
+- Call `session_information()` to confirm napari is running and responsive
+- Update STATE.md: `viewer_connected: true`, `mcp_registered: true`
+
+If no napari tools found after registration:
+- The MCP server may not have started. Check if napari window opened.
+- Try `/mcp` in Claude Code to see server status
+- If server shows error: check that the Python path is correct
+- Fall back to matplotlib, update STATE.md: `viewer_connected: false`
+
+### Step 4: Launch napari (if not already running)
+
+napari-mcp starts napari automatically when Claude Code connects to the MCP server.
+If napari is not opening:
+
+```bash
+# Manual launch as a last resort — opens napari but without MCP connection
+{viewer_python} -c "import napari; viewer = napari.Viewer(); napari.run()" &
+```
+
+This gives the user a viewer but Claude cannot push layers to it programmatically.
+Use matplotlib for Claude's visual output and tell the user to load files manually.
+
+### Direct napari launch (fallback without MCP)
+
+When MCP registration is not possible or fails, launch napari directly with data
+pre-loaded. Claude cannot interact with this viewer after launch.
 
 ```python
 import subprocess
 
 viewer_python = state["viewer_env"]["python"]  # from STATE.md
 
-result = subprocess.run(
-    [viewer_python, "-m", "pip", "install", "napari-mcp"],
-    capture_output=True, text=True, timeout=120
-)
+# Build a script that opens napari with the image and labels
+script = f'''
+import tifffile, napari
+image = tifffile.imread("{image_path}")
+labels = tifffile.imread("{labels_path}")
+viewer = napari.Viewer()
+viewer.add_image(image, name="raw", colormap="gray")
+viewer.add_labels(labels, name="segmentation")
+napari.run()
+'''
 
-if result.returncode != 0:
-    # See "Handle launch failure" section below
-    print(f"pip install failed:\n{result.stderr}")
+# Launch in background — user can interact, Claude uses matplotlib
+subprocess.Popen([viewer_python, "-c", script], start_new_session=True)
 ```
 
-### Launch napari-mcp (Windows)
+### Handle setup failure
 
-Launch as a detached process with stderr captured to a temp file so we can read
-error messages if the process dies.
-
-```python
-import subprocess, tempfile, os
-
-viewer_python = state["viewer_env"]["python"]  # from STATE.md
-
-# Create temp file for stderr capture
-stderr_file = os.path.join(tempfile.gettempdir(), "napari_mcp_stderr.log")
-
-with open(stderr_file, "w") as err_f:
-    proc = subprocess.Popen(
-        f'start "" "{viewer_python}" -m napari_mcp',
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=err_f
-    )
-```
-
-### Launch napari-mcp (macOS/Linux)
-
-```python
-import subprocess, tempfile, os
-
-viewer_python = state["viewer_env"]["python"]  # from STATE.md
-
-stderr_file = os.path.join(tempfile.gettempdir(), "napari_mcp_stderr.log")
-
-with open(stderr_file, "w") as err_f:
-    proc = subprocess.Popen(
-        [viewer_python, "-m", "napari_mcp"],
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=err_f
-    )
-```
-
-### Verify connection (check-before-first-use)
-
-**This is the critical pattern.** Never claim napari is connected without proof.
-The proof is a successful MCP response from `session_information()`.
-
-```python
-import time, os
-
-# Step 1: Wait for napari to start up
-time.sleep(5)
-
-# Step 2: Check if process is still alive (Windows: poll the PID)
-# If the process died, read stderr for the actual error
-stderr_file = os.path.join(tempfile.gettempdir(), "napari_mcp_stderr.log")
-
-# On Windows with `start`, proc.poll() returns immediately (it's the shell).
-# Instead, check if napari_mcp_stderr.log has error content:
-if os.path.exists(stderr_file):
-    with open(stderr_file, "r") as f:
-        stderr_content = f.read().strip()
-    if "Error" in stderr_content or "Traceback" in stderr_content:
-        # Process died — report the actual error
-        print(f"napari-mcp failed to start:\n{stderr_content}")
-        # Update STATE.md: viewer_connected: false
-        # Fall back to matplotlib
-```
-
-```python
-# Step 3: Attempt MCP connection — this is the PROOF
-# Call the napari-mcp tool session_information() via MCP
-# Expected MCP tool call:
-#   tool: session_information
-#   args: {}
-# Expected response: JSON with napari version, viewer state, etc.
-
-# If session_information() returns a valid response:
-#   → Connection confirmed
-#   → Update STATE.md: viewer_connected: true
-#   → Append to history: "[timestamp] Connected to napari via MCP"
-
-# If session_information() times out or errors:
-#   → Connection failed
-#   → Update STATE.md: viewer_connected: false, fallback: matplotlib
-#   → Append to history: "[timestamp] napari MCP connection failed: {error}"
-#   → Use matplotlib for this visual step
-#   → Retry MCP before the NEXT visual step (see retry pattern below)
-```
-
-**Retry pattern for subsequent visual steps:**
-
-```python
-# Before each visual step, check STATE.md viewer_connected field.
-# If false and napari was attempted but failed:
-#   1. Try session_information() one more time (napari may have finished loading)
-#   2. If success → update STATE.md viewer_connected: true, use napari
-#   3. If failure → use matplotlib, don't retry again until next analysis session
-```
-
-### Handle launch failure
-
-**pip install failure (corporate/HPC network restrictions):**
-
-```python
-result = subprocess.run(
-    [viewer_python, "-m", "pip", "install", "napari-mcp"],
-    capture_output=True, text=True, timeout=120
-)
-
-if result.returncode != 0:
-    stderr = result.stderr
-    if "SSL" in stderr or "proxy" in stderr or "network" in stderr:
-        # Network restriction — suggest alternatives
-        msg = (
-            "pip install failed (likely network restriction).\n"
-            "Options:\n"
-            "  1. conda install -c conda-forge napari-mcp\n"
-            "  2. Download wheel manually from PyPI and: pip install napari_mcp-*.whl\n"
-            "  3. Proceed without napari — I'll use matplotlib for all visuals."
-        )
-    else:
-        msg = f"pip install napari-mcp failed:\n{stderr}\nProceeding with matplotlib."
-
-    print(msg)
-    # Update STATE.md: napari_mcp_installed: false, viewer_connected: false, fallback: matplotlib
-```
-
-**napari version mismatch:**
-
-```python
-# Read napari version from STATE.md before installing napari-mcp
-napari_version = state["viewer_env"].get("napari", "none")
-
-if napari_version != "none":
-    major_minor = tuple(int(x) for x in napari_version.split(".")[:2])
-    if major_minor < (0, 5):
-        print(
-            f"WARNING: napari {napari_version} detected. napari-mcp requires >= 0.5.0.\n"
-            f"napari-mcp may not work correctly. Consider upgrading napari first:\n"
-            f"  pip install 'napari>=0.5.0'\n"
-            f"Proceeding with matplotlib as fallback."
-        )
-        # Update STATE.md: viewer_connected: false, fallback: matplotlib
-```
+If napari-mcp setup fails at any step, **don't stall**:
+1. Tell the user what failed and why
+2. Offer to try fixing it or proceed with matplotlib
+3. Update STATE.md: `viewer_connected: false, fallback: matplotlib`
+4. Continue analysis using matplotlib for all visuals
 
 ---
 
