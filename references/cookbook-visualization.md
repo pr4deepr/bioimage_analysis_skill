@@ -44,7 +44,7 @@ If pip fails (corporate/HPC network):
 {viewer_python} -c "import napari; print(napari.__version__)"
 ```
 
-If napari < 0.5.0, warn the user: napari-mcp may not work. Suggest upgrading.
+If napari < 0.5.5, warn the user: napari-mcp requires napari >= 0.5.5. Suggest upgrading.
 
 **Register with Claude Code using the automated installer (recommended):**
 
@@ -59,14 +59,21 @@ location automatically.
 **Manual registration (if the installer is not available):**
 
 ```bash
-claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp
+# If napari-mcp is installed in the active environment:
+claude mcp add napari-mcp -- napari-mcp
+
+# If napari-mcp is in a specific conda/venv environment, use full path:
+claude mcp add napari-mcp -- {viewer_python} -m napari_mcp
+
+# Or use uv to run without installing globally:
+claude mcp add napari-mcp -- uv run --with napari-mcp napari-mcp
 ```
 
 Where `{viewer_python}` is the **full absolute path** to the Python executable in the
 napari environment (e.g., `/home/user/.conda/envs/napari-env/bin/python`).
 
 After registering, Claude Code manages the MCP server lifecycle automatically —
-it starts the server when needed and stops it when done.
+it spawns the `napari-mcp` process and communicates over stdio.
 
 ### Step 3: Verify connection
 
@@ -92,9 +99,13 @@ If the call fails:
 If the user already has a napari viewer running:
 
 1. User opens napari's menu: **Plugins → napari-mcp: MCP Server Control**
-2. User clicks **"Start Server"** — this starts a bridge server in the existing session
+2. User clicks **"Start Server"** — this starts a bridge HTTP server on `localhost:9999`
 3. Register in Claude Code with the installer: `napari-mcp-install install claude-code`
 4. Verify with `session_information()` — the response includes the existing viewer's state
+
+**Note:** Plugin mode only exposes 3 tools: `session_information`, `add_layer`, and
+`execute_code`. For the full 16-tool set, use standalone mode. The port is configurable
+via the `NAPARI_MCP_BRIDGE_PORT` environment variable.
 
 Plugin mode is preferred when the user has data already loaded in napari or has a
 specific viewer layout they want to keep.
