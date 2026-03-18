@@ -68,7 +68,9 @@ Only proceed after the user approves or modifies the plan.
 Run pipeline step by step. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for approaches and version-specific code.
 
 ### 4. Iterate
-Adjust and re-run based on feedback. If not working after 2-3 tries: try a different tool, search forum.image.sc, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning. Don't over-tune — if parameters need drastic per-image adjustment, the approach is wrong.
+Adjust and re-run based on feedback. If not working after 2-3 tries: try a different tool, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning. Don't over-tune — if parameters need drastic per-image adjustment, the approach is wrong.
+
+**When stuck, search [forum.image.sc](https://forum.image.sc).** This is the primary community forum for bioimage analysis — actively monitored by developers of Cellpose, StarDist, napari, QuPath, CellProfiler, and other tools. Search for similar modalities, error messages, or workflows. Suggest users post there for expert advice on genuinely difficult problems.
 
 ### 5. Measure & Export
 Save organized outputs (labels, QC overlays, CSV tables). Reference `references/measurements.md` for extraction patterns and pitfalls. Connect back to biology — answering the biological question is the endpoint, not raw measurements. Reference `references/quality-control.md` for validation. Check versions before recommending features — see `references/environment.md`.
