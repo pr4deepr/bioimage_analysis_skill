@@ -21,6 +21,11 @@ comparing intensity measurements across the field.
 **Recommended tools**: BaSiC (ImageJ plugin or Python), scikit-image polynomial fitting,
 FIJI (Process > Calculator for flat-field division).
 
+```python
+# Flat-field correction: divide image by illumination estimate
+corrected = image / illumination_image * illumination_image.mean()
+```
+
 ## Background Subtraction
 
 Removes autofluorescence or non-specific staining so intensity measurements reflect
@@ -39,6 +44,17 @@ Less critical if you only need object shapes/counts.
 
 **Recommended tools**: FIJI (Process > Subtract Background), scikit-image
 morphology.white_tophat, scipy.ndimage for local background estimation.
+
+```python
+from skimage.restoration import rolling_ball
+background = rolling_ball(image, radius=50)
+background_removed = image - background
+```
+
+```python
+from skimage.morphology import disk, white_tophat
+background_removed = white_tophat(image, footprint=disk(radius))
+```
 
 ## Noise Reduction
 
@@ -59,6 +75,17 @@ segmentation accuracy.
 **Recommended tools**: scikit-image filters (gaussian, median, denoise_nl_means),
 FIJI Process > Filters.
 
+```python
+from skimage.filters import gaussian
+smoothed = gaussian(image, sigma=1.0)
+```
+
+```python
+from skimage.filters import median
+from skimage.morphology import disk
+denoised = median(image, footprint=disk(3))
+```
+
 ## Channel Separation and Selection
 
 For multi-channel images, extract the relevant channel(s) before segmentation.
@@ -74,6 +101,12 @@ that best defines the object boundary (e.g., DAPI for nuclei, membrane marker fo
 
 **Recommended tools**: BioIO (Python — reads multi-channel microscopy formats natively),
 numpy indexing, FIJI Image > Color > Split Channels.
+
+```python
+# For multi-channel array with shape (C, Y, X)
+dapi_channel = image[0]  # first channel
+marker_channel = image[1]  # second channel
+```
 
 ## Intensity Normalization
 
@@ -93,6 +126,12 @@ exposure times, staining variability, different imaging sessions).
 
 **Recommended tools**: scikit-image exposure.rescale_intensity, numpy percentile + clip,
 FIJI Image > Adjust > Brightness/Contrast (for interactive exploration).
+
+```python
+import numpy as np
+p1, p99 = np.percentile(image, (1, 99))
+normalized = np.clip((image - p1) / (p99 - p1), 0, 1).astype(np.float32)
+```
 
 ## Bit Depth Conversion
 
