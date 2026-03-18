@@ -77,12 +77,11 @@ The skill creates a `.bioimage-analysis/` directory with:
 
 ### napari Integration
 
-Uses [napari-mcp](https://github.com/royerlab/napari-mcp) to connect Claude to your napari viewer. Claude can:
-- Push images and labels directly into napari
-- Take screenshots to evaluate segmentation results
-- Iterate based on what it sees — no "please check the output"
+Uses [napari-mcp](https://github.com/royerlab/napari-mcp) to connect Claude to napari via MCP. Two modes:
+- **Standalone**: napari-mcp launches its own napari viewer when Claude connects
+- **Plugin**: connects to an already-running napari session (Plugins → napari-mcp → Start Server)
 
-If napari-mcp isn't installed, the skill offers to set it up (`pip install napari-mcp`).
+Claude can push images and labels, take screenshots, run code in the napari environment, and iterate based on what it sees. Setup: `pip install napari-mcp` then `napari-mcp-install install claude-code`.
 
 ## Slash Commands
 

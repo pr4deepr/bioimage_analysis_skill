@@ -8,27 +8,28 @@ matplotlib is the first-class fallback (always available, publication-quality).
 
 ## napari Setup & Connection
 
-napari-mcp must be **registered as an MCP server in Claude Code** — not just launched as
-a subprocess. Simply running `python -m napari_mcp` does NOT make MCP tools available.
+napari-mcp (github.com/royerlab/napari-mcp) connects Claude to a napari viewer via
+MCP. It has **two modes** — choose based on the user's situation:
+
+| Mode | When to use | How it works |
+|------|------------|--------------|
+| **Standalone** | User doesn't have napari open yet | MCP server launches its own napari viewer |
+| **Plugin** | User already has napari running | napari plugin starts a bridge server that connects to the existing session |
 
 ### Step 1: Check if napari-mcp is already registered
-
-Use the Bash tool to check existing MCP servers:
 
 ```bash
 claude mcp list
 ```
 
-If `napari` appears in the list → skip to Step 3 (verify connection).
+If `napari-mcp` appears → skip to Step 3 (verify connection).
 
 ### Step 2: Install and register napari-mcp
-
-This is a two-part process: install the package, then register the MCP server.
 
 **Install napari-mcp into the napari environment:**
 
 ```bash
-# Use the Python from the napari environment
+# Use the Python from the napari environment (full absolute path)
 {viewer_python} -m pip install napari-mcp
 ```
 
@@ -45,57 +46,64 @@ If pip fails (corporate/HPC network):
 
 If napari < 0.5.0, warn the user: napari-mcp may not work. Suggest upgrading.
 
-**Register napari-mcp as an MCP server in Claude Code:**
+**Register with Claude Code using the automated installer (recommended):**
+
+```bash
+napari-mcp-install install claude-code
+```
+
+This auto-detects the napari environment and writes the correct MCP server config.
+The installer handles Python path resolution, transport settings, and config file
+location automatically.
+
+**Manual registration (if the installer is not available):**
 
 ```bash
 claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp
 ```
 
-Where `{viewer_python}` is the **full path** to the Python executable in the napari
-environment (e.g., `C:/Users/Pradeep/.conda/envs/napari-lattice/python.exe`).
+Where `{viewer_python}` is the **full absolute path** to the Python executable in the
+napari environment (e.g., `/home/user/.conda/envs/napari-env/bin/python`).
 
-**Important:** Use the full absolute path to the Python executable, not just `python`.
-This ensures Claude Code uses the correct environment regardless of PATH settings.
-
-After registering, the MCP tools become available in the current session. No restart
-needed — Claude Code picks up new MCP servers dynamically.
+After registering, Claude Code manages the MCP server lifecycle automatically —
+it starts the server when needed and stops it when done.
 
 ### Step 3: Verify connection
 
-**The proof of connection is a successful MCP tool call.** Use the `ToolSearch` tool
-to check if napari-mcp tools are available:
+**The proof of connection is a successful MCP tool call.** Call `session_information()`
+to confirm napari is running and responsive:
 
 ```
-ToolSearch: query="napari" max_results=5
+MCP tool: session_information
+Arguments: {}
 ```
 
-If napari tools appear (e.g., `session_information`, `add_image`, `add_labels`):
-- Call `session_information()` to confirm napari is running and responsive
+If the call succeeds:
 - Update STATE.md: `viewer_connected: true`, `mcp_registered: true`
+- The napari viewer window should be open (standalone mode launches it automatically)
 
-If no napari tools found after registration:
-- The MCP server may not have started. Check if napari window opened.
-- Try `/mcp` in Claude Code to see server status
-- If server shows error: check that the Python path is correct
+If the call fails:
+- Check `/mcp` in Claude Code to see server status and error messages
+- Verify the Python path is correct and napari-mcp is installed in that environment
 - Fall back to matplotlib, update STATE.md: `viewer_connected: false`
 
-### Step 4: Launch napari (if not already running)
+### Plugin mode (user already has napari open)
 
-napari-mcp starts napari automatically when Claude Code connects to the MCP server.
-If napari is not opening:
+If the user already has a napari viewer running:
 
-```bash
-# Manual launch as a last resort — opens napari but without MCP connection
-{viewer_python} -c "import napari; viewer = napari.Viewer(); napari.run()" &
-```
+1. User opens napari's menu: **Plugins → napari-mcp: MCP Server Control**
+2. User clicks **"Start Server"** — this starts a bridge server in the existing session
+3. Register in Claude Code with the installer: `napari-mcp-install install claude-code`
+4. Verify with `session_information()` — the response includes the existing viewer's state
 
-This gives the user a viewer but Claude cannot push layers to it programmatically.
-Use matplotlib for Claude's visual output and tell the user to load files manually.
+Plugin mode is preferred when the user has data already loaded in napari or has a
+specific viewer layout they want to keep.
 
 ### Direct napari launch (fallback without MCP)
 
 When MCP registration is not possible or fails, launch napari directly with data
-pre-loaded. Claude cannot interact with this viewer after launch.
+pre-loaded. Claude cannot interact with this viewer after launch — use matplotlib
+for Claude's visual output.
 
 ```python
 import subprocess
@@ -120,79 +128,68 @@ subprocess.Popen([viewer_python, "-c", script], start_new_session=True)
 ### Handle setup failure
 
 If napari-mcp setup fails at any step, **don't stall**:
-1. Tell the user what failed and why
+1. Tell the user what failed and why (show the actual error)
 2. Offer to try fixing it or proceed with matplotlib
 3. Update STATE.md: `viewer_connected: false, fallback: matplotlib`
 4. Continue analysis using matplotlib for all visuals
 
 ---
 
-## Which Viewer? — Decision Snippet
+## Which Viewer? — Decision Logic
 
-Use this before every visual step. Reads STATE.md and routes to the correct code path.
+Before every visual step, check STATE.md for `viewer_connected`:
 
-```python
-def get_viewer_mode(state_path=".bioimage-analysis/STATE.md"):
-    """Read STATE.md and return 'napari' or 'matplotlib'.
+- `viewer_connected: true` → use napari MCP tools
+- `viewer_connected: false` or missing → use matplotlib
 
-    Call this before every visualization step.
-    If napari was expected but not yet connected, attempt one MCP retry.
-    """
-    # Parse STATE.md for viewer_connected field
-    with open(state_path, "r") as f:
-        content = f.read()
-
-    viewer_connected = "viewer_connected: true" in content
-    napari_available = "napari_available: true" in content
-
-    if viewer_connected:
-        return "napari"
-
-    if napari_available and not viewer_connected:
-        # One retry — napari may have finished starting
-        # Call session_information() via MCP
-        # If success: update STATE.md viewer_connected: true, return "napari"
-        # If failure: return "matplotlib"
-        pass
-
-    return "matplotlib"
-```
-
-**Usage at every visual step:**
-
-```python
-viewer = get_viewer_mode()
-
-if viewer == "napari":
-    # Use MCP tool calls (add_image, add_labels, etc.)
-    ...
-elif viewer == "matplotlib":
-    # Use matplotlib code paths below
-    ...
-```
+If napari is available but not yet connected, attempt `session_information()` once.
+If it succeeds, update STATE.md and use napari. If it fails, use matplotlib for this
+step — don't block the analysis.
 
 ---
 
 ## Showing Results — napari
 
-All napari operations use MCP tool calls. The expected tool names are:
-- `session_information` — check connection, get viewer state
-- `add_image` — add a raw image layer
-- `add_labels` — add a label/segmentation layer
-- `take_screenshot` — capture the current viewer as an image
+All napari operations use MCP tool calls. napari-mcp exposes **16 tools** organized
+into four categories:
+
+**Session management:**
+- `session_information` — check connection, get viewer state and layer info
+- `init_viewer` — initialize a new napari viewer (standalone mode does this automatically)
+- `close_viewer` — shut down the viewer
+
+**Layer operations:**
+- `add_layer` — add image, labels, shapes, or points layer (specify `layer_type`)
+- `list_layers` — list all layers currently in the viewer
+- `get_layer` — get properties of a specific layer
+- `remove_layer` — delete a layer
+- `set_layer_properties` — change colormap, visibility, opacity, etc.
+- `reorder_layer` — change layer stacking order
+- `apply_to_layers` — batch operations on multiple layers
+- `save_layer_data` — export layer data to disk
+
+**Viewer controls:**
+- `configure_viewer` — adjust camera, display mode, theme
+
+**Utilities:**
+- `screenshot` — capture current viewer display as image
+- `execute_code` — run Python code in the napari environment
+- `install_packages` — install packages via pip in the napari environment
+- `read_output` — access results from previous code execution
 
 ### Add raw image
 
 ```
-MCP tool: add_image
+MCP tool: add_layer
 Arguments:
+  layer_type: "image"
   name: "raw"
   data: <numpy array or path to image file>
   colormap: "gray"         # optional, default gray
   contrast_limits: [low, high]  # optional, auto-computed if omitted
 ```
 
-After adding, call `take_screenshot` to capture the view for evaluation.
+After adding, call `screenshot` to capture the view for evaluation.
 
 ### Add segmentation overlay (labels on image)
 
@@ -201,20 +198,22 @@ colored overlay automatically.
 
 ```
 # Step 1: Add the raw image (if not already added)
-MCP tool: add_image
+MCP tool: add_layer
 Arguments:
+  layer_type: "image"
   name: "raw"
   data: <raw image array>
   colormap: "gray"
 
 # Step 2: Add the labels layer on top
-MCP tool: add_labels
+MCP tool: add_layer
 Arguments:
+  layer_type: "labels"
   name: "segmentation"
   data: <label array, dtype int32>
 
 # Step 3: Screenshot to evaluate
-MCP tool: take_screenshot
+MCP tool: screenshot
 ```
 
 The labels layer sits on top of the image layer with transparency. Each label ID
@@ -227,26 +226,28 @@ and toggle visibility, or use napari's grid mode:
 
 ```
 # Add first result
-MCP tool: add_labels
+MCP tool: add_layer
 Arguments:
+  layer_type: "labels"
   name: "segmentation_v1"
   data: <labels_v1>
 
 # Add second result
-MCP tool: add_labels
+MCP tool: add_layer
 Arguments:
+  layer_type: "labels"
   name: "segmentation_v2"
   data: <labels_v2>
 
 # User can toggle layers in napari's layer list
 # Screenshot each separately for evaluation
-MCP tool: take_screenshot
+MCP tool: screenshot
 ```
 
 ### QC overlay (outlines colored by measurement)
 
 Color each object by a measurement value (e.g., area) for quality assessment.
-This requires building a colored label image in Python, then sending it.
+Build a colored image in Python, then send it as an image layer.
 
 ```python
 import numpy as np
@@ -257,27 +258,43 @@ props = regionprops(labels, intensity_image=raw)
 colored = np.zeros_like(labels, dtype=float)
 for p in props:
     colored[labels == p.label] = p.area  # or any measurement
-
-# Send as image layer with a colormap
-# MCP tool: add_image
-# Arguments:
-#   name: "area_overlay"
-#   data: colored
-#   colormap: "viridis"
-#   contrast_limits: [min_area, max_area]
-
-# Also keep the raw image underneath for context
 ```
 
-### Take screenshot via MCP
+Then send via MCP:
 
 ```
-MCP tool: take_screenshot
+MCP tool: add_layer
+Arguments:
+  layer_type: "image"
+  name: "area_overlay"
+  data: <colored array>
+  colormap: "viridis"
+  contrast_limits: [min_area, max_area]
+```
+
+Keep the raw image underneath for context.
+
+### Take screenshot
+
+```
+MCP tool: screenshot
 Arguments: {}
 
 # Returns: image data (PNG bytes or numpy array)
 # Use this to evaluate results programmatically or show in conversation
 ```
+
+### Execute code in napari environment
+
+For complex operations not covered by individual tools, run code directly:
+
+```
+MCP tool: execute_code
+Arguments:
+  code: "import numpy as np; print(viewer.layers['segmentation'].data.max())"
+```
+
+Use `read_output` to retrieve results from previous `execute_code` calls.
 
 ---
 

@@ -66,7 +66,7 @@ STATE.md and ANALYSIS.md live in `.bioimage-analysis/` in the project directory.
 Read the image, scan directory for context (custom models, configs, other images). Find tools — use STATE.md cache if available, else spawn background scanner. Find viewer and write ANALYSIS.md with the plan. Reference `references/cookbook-io.md` for reading patterns.
 
 ### 2. Connect Viewer
-Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
+Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code**. Use `claude mcp list` to check. Setup: `napari-mcp-install install claude-code` (recommended) or manual `claude mcp add`. Two modes: standalone (creates viewer) or plugin (connects to existing napari session). Verify with `session_information()` MCP call. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
 
 ### 3. Execute
 Read ANALYSIS.md, run pipeline step by step. After every visual step: check viewer_connected, push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Update STATE.md after each step. Reference `references/cookbook-segmentation.md`.
