@@ -62,6 +62,34 @@ Present the analysis plan to the user and **wait for explicit approval** before 
 **Does this plan look right?** Should I use a different approach, measure different things, or organize outputs differently?
 ```
 
+**Example** (filled in):
+
+```
+## Proposed Analysis
+
+**Your question:** Are treated cells smaller than control cells?
+
+**What I see:** 2-channel fluorescence (DAPI + GFP), 1024x1024, 16-bit,
+~200 cells per image, 24 images across 2 conditions (control/treated)
+
+**Proposed pipeline:**
+1. No preprocessing needed — illumination looks uniform, good SNR
+2. Segment nuclei in DAPI channel using StarDist (2D_versatile_fluo)
+   — nuclei are round and well-separated, StarDist is fast
+3. Measure: nuclear area (µm²), mean GFP intensity per nucleus
+4. Export as CSV with condition column, plus summary stats per condition
+
+**Expected outputs:**
+- `results/labels/` — one label mask per image (TIFF, int32)
+- `results/measurements.csv` — one row per nucleus with columns:
+  image, condition, area_um2, mean_GFP_intensity
+- `results/qc_overlays/` — segmentation overlay PNGs for verification
+- `results/summary.csv` — per-condition mean ± SD for area and intensity
+
+**Does this plan look right?** Should I use a different segmentation
+approach, measure different things, or organize outputs differently?
+```
+
 Only proceed after the user approves or modifies the plan.
 
 ### 3. Execute
