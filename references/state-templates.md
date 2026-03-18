@@ -40,7 +40,7 @@ significant action.
 - image_info: 1024x1024, uint16, single channel, Hu staining
 - analysis_plan: .bioimage-analysis/ANALYSIS.md
 - current_step: segmentation
-- step_status: completed
+- step_status: in_progress | completed
 
 ## History
 - [2026-03-12 13:02] Environment scan: found stardist env, everyday_env with napari
@@ -61,6 +61,10 @@ significant action.
 
 **How to update:** Read the current STATE.md, modify the relevant section, write it
 back. Don't rewrite the whole file — preserve history.
+
+**Before starting each analysis step:** set `step_status: in_progress` and `current_step` to the step name.
+**After completing each step:** set `step_status: completed`.
+**On re-activation with step_status: in_progress:** the previous step was interrupted. Offer to retry or skip.
 
 **On re-activation:** If STATE.md exists and is recent (check history timestamps),
 trust it. Don't re-scan environments. Only re-scan if:
@@ -111,6 +115,14 @@ The analysis plan. Generated during the assess/plan step. Referenced during exec
 custom model to pretrained, changed parameters after QC).
 
 **Don't delete ANALYSIS.md** after completion — it serves as a record of what was done.
+
+---
+
+## Validation Rules
+
+On reading STATE.md, check for required sections: **Environment**, **Viewer**, **History**.
+If any required section is missing or the file is unparseable, treat STATE.md as corrupted —
+delete it and re-scan from scratch. Don't attempt to recover partial state.
 
 ---
 
