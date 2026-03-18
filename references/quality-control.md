@@ -13,6 +13,19 @@ Overlay segmentation masks on the raw image. Do boundaries match the objects?
 - In Python: use napari (add labels layer over image) or matplotlib contour overlay on
   the raw image. In FIJI: use Image > Overlay > Add Image or the ROI Manager.
 
+```python
+# matplotlib overlay
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(10, 10))
+ax.imshow(image, cmap='gray')
+ax.contour(labels > 0, colors='cyan', linewidths=0.5)
+ax.set_title(f'Segmentation overlay — {labels.max()} objects')
+ax.axis('off')
+plt.tight_layout()
+```
+
+> napari: See cookbook-visualization.md § Add segmentation overlay
+
 ## 2. Object Count Sanity Check
 
 Does the automated count match manual count in a few representative fields?
@@ -22,6 +35,12 @@ Does the automated count match manual count in a few representative fields?
 - Compare. If automated count is consistently >20% off, the segmentation needs tuning.
 - Under-counting usually means objects are being merged or missed
 - Over-counting usually means debris/noise is being detected or objects are being split
+
+```python
+n_objects = labels.max()
+print(f"Automated count: {n_objects}")
+# Compare with manual count from a few representative fields
+```
 
 ## 3. Size Distribution
 
@@ -36,6 +55,18 @@ What to look for:
   or similar method is splitting objects into equal-sized pieces.
 - **Long right tail**: a few very large objects are almost always merged clusters. Check them.
 
+```python
+from skimage.measure import regionprops
+import matplotlib.pyplot as plt
+areas = [p.area * pixel_size**2 for p in regionprops(labels)]
+fig, ax = plt.subplots()
+ax.hist(areas, bins=50, edgecolor='black')
+ax.set_xlabel('Area (µm²)')
+ax.set_ylabel('Count')
+ax.set_title('Object size distribution')
+plt.tight_layout()
+```
+
 ## 4. Edge Case Images
 
 Check the images with the highest and lowest object counts in your dataset.
@@ -45,6 +76,14 @@ Check the images with the highest and lowest object counts in your dataset.
 - Lowest-count images: may be out-of-focus, have unusual staining, or contain mostly
   background. Verify the low count is real and not a segmentation failure.
 - These extremes are where failures concentrate — fixing them often improves the whole dataset.
+
+```python
+# After processing all images, find extremes for inspection
+# counts = {fname: label_img.max() for fname, label_img in results.items()}
+# sorted_by_count = sorted(counts.items(), key=lambda x: x[1])
+# Check lowest 3: sorted_by_count[:3]
+# Check highest 3: sorted_by_count[-3:]
+```
 
 ## 5. Measurement Distributions
 
@@ -59,6 +98,21 @@ Plot distributions of your key measurements across all objects.
   condition has a wildly different distribution shape (not just shifted mean), check whether
   imaging conditions differed (focus, exposure, staining intensity).
 
+```python
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+axes[0].hist(areas, bins=50)
+axes[0].set_title('Area distribution')
+axes[0].set_xlabel('Area (µm²)')
+axes[1].hist(mean_intensities, bins=50)
+axes[1].set_title('Mean intensity')
+axes[1].set_xlabel('Intensity (a.u.)')
+axes[2].hist(eccentricities, bins=50)
+axes[2].set_title('Eccentricity')
+axes[2].set_xlabel('Eccentricity')
+plt.tight_layout()
+```
+
 ## 6. Batch Effects (if applicable)
 
 If data spans multiple plates, slides, or imaging sessions:
@@ -68,6 +122,17 @@ If data spans multiple plates, slides, or imaging sessions:
 - Common causes: different exposure times, lamp intensity drift, staining variability
 - Mitigation: normalize measurements per-batch (z-score within batch), or include batch
   as a covariate in statistical models
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+control_data = df[df['condition'] == 'control']
+fig, ax = plt.subplots()
+control_data.boxplot(column='area_um2', by='batch', ax=ax)
+ax.set_title('Area by batch (controls only)')
+ax.set_ylabel('Area (µm²)')
+plt.tight_layout()
+```
 
 ---
 
