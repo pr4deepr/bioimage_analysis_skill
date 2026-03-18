@@ -15,6 +15,19 @@ Reference for selecting and interpreting measurements after segmentation.
 | Perimeter | Boundary length | Ruffling, membrane dynamics |
 | Compactness | Perimeter² / (4π × area) | Inverse of form factor; high = irregular |
 
+```python
+# Area in calibrated units
+areas_um2 = [p.area * (pixel_size ** 2) for p in props]
+
+# Eccentricity (0 = circle, 1 = line)
+eccentricities = [p.eccentricity for p in props]
+
+# Solidity (area / convex hull area)
+solidities = [p.solidity for p in props]
+```
+
+> See: cookbook-measurements.md § Morphology Measurements
+
 ### Intensity
 
 | Measurement | What it captures | Biological interpretation |
@@ -24,6 +37,16 @@ Reference for selecting and interpreting measurements after segmentation.
 | Intensity SD | Variation within object | Signal heterogeneity — punctate vs diffuse |
 | Max intensity | Brightest pixel | Focal accumulation, aggregates |
 | Intensity ratio (ch1/ch2) | Relative expression | Co-localization proxy, ratiometric reporters |
+
+```python
+# Mean intensity per object
+mean_intensities = [p.mean_intensity for p in props]
+
+# Integrated intensity (total signal, accounts for cell size)
+integrated = [p.mean_intensity * p.area for p in props]
+```
+
+> See: cookbook-measurements.md § Intensity Measurements
 
 **Critical**: always clarify whether intensity is raw or background-subtracted. Raw intensity
 comparisons across experiments are unreliable without normalization.
@@ -45,6 +68,8 @@ Texture features quantify spatial patterns of pixel intensity within objects.
 | Nearest-neighbor distance | Spacing between objects | Confluency, clustering behavior |
 | Neighbor count within radius | Local density | Microenvironment, paracrine signaling range |
 | XY centroid coordinates | Object position | Required for spatial statistics (Ripley's K, etc.) |
+
+> See: cookbook-measurements.md § Spatial Measurements
 
 ---
 
