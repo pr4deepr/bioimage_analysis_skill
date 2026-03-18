@@ -117,7 +117,60 @@ A Python function to parse STATE.md and return "napari" or "matplotlib" — but 
 
 ## What's missing that would actually help
 
-### 1. Common error messages and fixes
+### 1. Propose the solution and get user approval before execution (CRITICAL)
+
+This is the biggest workflow gap in the skill. The current flow is:
+
+```
+Assess → (write ANALYSIS.md internally) → Execute
+```
+
+There is no explicit step where Claude **presents the proposed analysis plan to the user and waits for approval** before running anything. The skill writes ANALYSIS.md during Assess, then jumps straight to execution in step 3. The user never sees or approves the plan.
+
+**Why this matters:**
+- The user might disagree with the tool choice (e.g., wants Cellpose not StarDist, or knows classical thresholding won't work on their data)
+- The user might not need all the measurements Claude plans to extract
+- The expected outputs (what files, what format, what biological question gets answered) are never confirmed
+- If the plan is wrong, the user discovers this only after Claude has already run the pipeline — wasting time and potentially overwriting files
+- Users from different labs have different conventions for output organization, file naming, and which measurements matter
+
+**What the skill should require — a "propose → approve → execute" pattern:**
+
+After assessing the image and before any execution, Claude should present a concise summary like:
+
+```
+## Proposed Analysis
+
+**Your question:** Are treated cells smaller than control cells?
+
+**What I see:** 2-channel fluorescence (DAPI + GFP), 1024x1024, 16-bit, ~200 cells per image, 24 images across 2 conditions
+
+**Proposed pipeline:**
+1. Segment nuclei in DAPI channel using StarDist (2D_versatile_fluo) — your nuclei are round and well-separated
+2. Measure: area, mean GFP intensity per nucleus
+3. Export: labels.tif per image + measurements.csv with condition column
+
+**Expected outputs:**
+- `results/labels/` — one label mask per image (TIFF, int32)
+- `results/measurements.csv` — one row per nucleus: image, condition, area_um², mean_GFP_intensity
+- `results/qc_overlays/` — segmentation overlay PNGs for visual verification
+- `results/summary.csv` — per-condition mean ± SD for area and intensity
+
+**What I need from you:** Does this plan look right? Should I use a different segmentation approach, measure different things, or organize outputs differently?
+```
+
+Only after the user approves (or modifies) should Claude proceed to execution.
+
+**This is not just a nice-to-have — it's essential.** Bioimage analysis is expensive (minutes per run on large datasets, GPU time for DL models). Running the wrong pipeline wastes real time. More importantly, the biological question drives everything — if Claude misunderstands the question, all downstream work is wrong.
+
+**How to implement in SKILL.md:**
+- Add a new step between Assess and Execute: **"Propose"**
+- The workflow becomes: **Assess → Propose → (user approves) → Execute → Iterate → Measure**
+- Rule 3 ("Ask focused questions, then execute") should be amended: "Ask focused questions, **propose the plan with expected outputs**, then execute after approval"
+- The ANALYSIS.md template should include an "Expected Outputs" section
+- The `/bio:plan` command should end with presenting the plan for approval, not silently writing ANALYSIS.md
+
+### 2. Common error messages and fixes
 When Cellpose fails with `CUDA out of memory`, when StarDist throws `ValueError: ndim`, when BioIO can't find a reader — these are the moments users need help most. A section mapping common errors to fixes would be more valuable than any amount of correct-path code.
 
 ### 2. "Which tool for which image" decision tree
