@@ -199,51 +199,11 @@ Check before recommending any specific model or API.
 
 ---
 
-## Napari Viewer Setup
+## napari Viewer Setup
 
-### Goal
+> See: cookbook-visualization.md § napari Launch & Verification
 
-Claude can SEE the viewer via MCP — push images/labels, take screenshots, evaluate.
-Without the connector, Claude is blind to what napari shows.
-
-### Install connector
-
-Ask once: "I can connect to your napari so I can show you results directly — want me
-to set that up?"
-
-```python
-# Use the Python from the env that has napari
-subprocess.run([viewer_python, "-m", "pip", "install", "napari-mcp"],
-    check=True, timeout=120)
-```
-
-### Launch napari with connector
-
-**Windows:**
-```python
-subprocess.Popen(f'start "" "{viewer_python}" -m napari_mcp', shell=True)
-```
-
-**macOS / Linux:**
-```python
-subprocess.Popen([viewer_python, "-m", "napari_mcp"],
-    start_new_session=True,
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-```
-
-### Verify connection
-
-Wait 10-15 seconds, then try MCP tools: `session_information()` or `detect_viewers()`.
-- Connected: "🔬 Connected to napari."
-- Not connected: "Try Plugins → napari-mcp → Start Server in napari."
-
-**After connection attempt, update STATE.md:**
-- Success: set `viewer_connected: true`, append to history
-- Failure: set `viewer_connected: false, fallback: matplotlib`, append error to history
-
-### If setup fails
-
-Don't stall. "I'll show results as plots instead." Fall back to matplotlib.
+For the canonical napari-mcp install, launch, connection verification, and fallback patterns.
 
 ---
 
