@@ -31,6 +31,9 @@ the image histogram.
 **Recommended tools**: scikit-image filters.threshold_otsu / threshold_li / threshold_local,
 FIJI Image > Adjust > Threshold (interactive), scipy.ndimage.label for connected components.
 
+> See: cookbook-segmentation.md § Otsu thresholding + connected components
+> See: cookbook-segmentation.md § Adaptive thresholding
+
 ### Watershed
 
 Separates touching objects by treating the intensity image like a topographic surface and
@@ -55,6 +58,8 @@ then grow regions from seeds until they meet at boundaries.
 
 **Recommended tools**: scikit-image segmentation.watershed, scipy.ndimage.distance_transform_edt,
 FIJI Process > Binary > Watershed, MorphoLibJ (FIJI plugin for advanced morphological watershed).
+
+> See: cookbook-segmentation.md § Threshold + distance transform + watershed
 
 ### Deep Learning Instance Segmentation
 
@@ -97,6 +102,9 @@ produces per-pixel predictions that are decoded into individual object masks.
 - You need very high accuracy for publication
 - Budget: ~20-50 annotated images for Cellpose fine-tuning, 50+ for nnUNetv2
 
+> See: cookbook-segmentation.md § Deep Learning — Cellpose
+> See: cookbook-segmentation.md § Deep Learning — StarDist
+
 ---
 
 ## Post-Processing
@@ -126,6 +134,8 @@ cells, nuclear rings).
 Jagged mask boundaries produce noisy perimeter and shape measurements. A light
 morphological closing (dilate then erode, kernel size 1-3) smooths boundaries without
 significantly changing area.
+
+> See: cookbook-segmentation.md § Post-Processing
 
 ---
 
