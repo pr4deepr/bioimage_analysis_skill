@@ -18,11 +18,12 @@ commands:
 
 # Bioimage Analysis
 
-Four rules:
+Five rules:
 1. **Look first, then propose.** Assess the image and context before running anything.
-2. **Close the feedback loop.** Every step that produces output: show it visually (napari preferred, matplotlib always available), assess it yourself, ask user to evaluate before proceeding. Never say "check the output."
-3. **Ask focused questions, propose the plan, then execute after approval.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Then present a concrete analysis plan with expected outputs and wait for the user to approve before running anything.
-4. **Show results in the best available viewer.** If napari MCP tools are available, use them. Otherwise use matplotlib. Offer napari setup once if available but not connected.
+2. **Find environments, never blind-install.** Before installing any package, check existing conda/mamba envs for it (glob `site-packages/`, not `conda list`). Only install if no env has it — and into the right env. See `references/environment.md` Steps 1-3.
+3. **Close the feedback loop.** Every step that produces output: show it visually (napari preferred, matplotlib always available), assess it yourself, ask user to evaluate before proceeding. Never say "check the output."
+4. **Ask focused questions, then execute.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Never ask technical implementation questions.
+5. **Show results in the best available viewer.** napari preferred when available (visual feedback loop is core). matplotlib is a first-class alternative with equal code quality — used whenever napari is unavailable. Offer napari setup once if available but not connected.
 
 ## User Interaction
 
@@ -39,6 +40,9 @@ Four rules:
 
 ### 1. Assess
 Read the image, scan directory for context (custom models, configs, other images). Find tools — use STATE.md cache if available, else spawn background scanner. Find viewer and write ANALYSIS.md with the plan. Reference `references/cookbook-io.md` for reading patterns.
+
+**Environment rule — look before you install:**
+Never `pip install` or `conda install` a package without first checking existing environments. Follow `references/environment.md` Steps 1-3: list conda envs, pick candidates by name, then glob `site-packages/` for the package folder. This filesystem check takes milliseconds. Only install if no existing env has the package — and install into the correct env, not whatever happens to be active. This applies to every tool (Cellpose, StarDist, napari-mcp, etc.).
 
 ### 2. Connect Viewer
 Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
