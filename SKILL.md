@@ -38,59 +38,10 @@ Four rules:
 ## Workflow
 
 ### 1. Assess
-Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. No background scanner needed.
+Read the image, scan directory for context (custom models, configs, other images). Find tools — use STATE.md cache if available, else spawn background scanner. Find viewer and write ANALYSIS.md with the plan. Reference `references/cookbook-io.md` for reading patterns.
 
-### 2. Propose (CRITICAL — do not skip)
-Present the analysis plan to the user and **wait for explicit approval** before executing. The proposal must include:
-
-```
-## Proposed Analysis
-
-**Your question:** [biological question in one sentence]
-
-**What I see:** [channels, dimensions, bit depth, approximate object count, number of images, conditions]
-
-**Proposed pipeline:**
-1. [Preprocessing step, or "none needed"]
-2. [Segmentation tool + model + why this choice]
-3. [What to measure and why]
-4. [Export format]
-
-**Expected outputs:**
-- [specific files, formats, organization]
-
-**Does this plan look right?** Should I use a different approach, measure different things, or organize outputs differently?
-```
-
-**Example** (filled in):
-
-```
-## Proposed Analysis
-
-**Your question:** Are treated cells smaller than control cells?
-
-**What I see:** 2-channel fluorescence (DAPI + GFP), 1024x1024, 16-bit,
-~200 cells per image, 24 images across 2 conditions (control/treated)
-
-**Proposed pipeline:**
-1. No preprocessing needed — illumination looks uniform, good SNR
-2. Segment nuclei in DAPI channel using StarDist (2D_versatile_fluo)
-   — nuclei are round and well-separated, StarDist is fast
-3. Measure: nuclear area (µm²), mean GFP intensity per nucleus
-4. Export as CSV with condition column, plus summary stats per condition
-
-**Expected outputs:**
-- `results/labels/` — one label mask per image (TIFF, int32)
-- `results/measurements.csv` — one row per nucleus with columns:
-  image, condition, area_um2, mean_GFP_intensity
-- `results/qc_overlays/` — segmentation overlay PNGs for verification
-- `results/summary.csv` — per-condition mean ± SD for area and intensity
-
-**Does this plan look right?** Should I use a different segmentation
-approach, measure different things, or organize outputs differently?
-```
-
-Only proceed after the user approves or modifies the plan.
+### 2. Connect Viewer
+Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
 
 ### 3. Execute
 Run pipeline step by step. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for approaches and version-specific code.
