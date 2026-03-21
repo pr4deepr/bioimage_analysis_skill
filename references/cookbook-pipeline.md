@@ -14,8 +14,27 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
+import os, sys, subprocess
+from pathlib import Path
 from skimage.measure import regionprops_table, label as relabel
 from skimage.segmentation import clear_border
+
+# ──────────────────────────────────────────────
+# SETUP — auto-open helper (see cookbook-visualization.md)
+# ──────────────────────────────────────────────
+os.makedirs("analysis", exist_ok=True)
+
+def show_result(filepath):
+    path = str(Path(filepath).resolve())
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
 
 # ──────────────────────────────────────────────
 # 1. READ
@@ -69,7 +88,8 @@ ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} nuclei")
 plt.tight_layout()
 plt.savefig("analysis/qc_overlay.png", dpi=150, bbox_inches="tight")
-plt.show()
+plt.close()
+show_result("analysis/qc_overlay.png")
 
 # ──────────────────────────────────────────────
 # 5. MEASURE
@@ -89,9 +109,6 @@ props = props.rename(columns={
 # ──────────────────────────────────────────────
 # 6. EXPORT
 # ──────────────────────────────────────────────
-import os
-os.makedirs("analysis", exist_ok=True)
-
 tifffile.imwrite("analysis/labels.tif", labels.astype(np.int32), compression="zlib")
 props.to_csv("analysis/measurements.csv", index=False)
 
@@ -113,8 +130,24 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
+import os, sys, subprocess
+from pathlib import Path
 from skimage.measure import regionprops_table, regionprops, label as relabel
 from skimage.segmentation import clear_border
+
+os.makedirs("analysis", exist_ok=True)
+
+def show_result(filepath):
+    path = str(Path(filepath).resolve())
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
 
 # ──────────────────────────────────────────────
 # 1. READ
@@ -162,7 +195,8 @@ ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} cells")
 plt.tight_layout()
 plt.savefig("analysis/qc_overlay.png", dpi=150, bbox_inches="tight")
-plt.show()
+plt.close()
+show_result("analysis/qc_overlay.png")
 
 # ──────────────────────────────────────────────
 # 5. MEASURE & EXPORT

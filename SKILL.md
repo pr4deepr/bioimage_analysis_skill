@@ -29,7 +29,7 @@ commands:
 Four rules:
 1. **Look first, then propose.** Assess the image and context before running anything.
 2. **Check the active env, never blind-install.** Before installing any package, check the active Python environment first (glob `site-packages/`). Only scan other envs if the active one is missing tools. Only install as a last resort. See `references/environment.md`.
-3. **Close the feedback loop.** Every step that produces output: show it with matplotlib, run automated QC (`references/quality-control.md`), then ask the user to evaluate. Never say "check the output."
+3. **Close the feedback loop.** Every step that produces output: save to `analysis/` folder, auto-open it (the user's default image viewer opens automatically), run automated QC (`references/quality-control.md`), then ask the user to evaluate. Never say "check the output."
 4. **Ask focused questions, then execute.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Never ask technical implementation questions.
 
 ## User Interaction
@@ -45,11 +45,11 @@ Four rules:
 
 ## Visualization
 
-**matplotlib is the default viewer.** Always available, zero setup, publication-quality.
+**Save + auto-open.** Every visual output is saved to the `analysis/` folder and automatically opened in the user's default image viewer (`xdg-open` / `open` / `os.startfile`). This gives interactive feedback (zoom, pan, inspect) without any MCP setup. Use the `show_result()` helper from `references/cookbook-visualization.md`.
 
-**napari-mcp is opt-in.** Only set up if the user explicitly wants interactive viewing or already has napari running. Offer once, early: "I'll use matplotlib for visuals. If you'd like interactive napari, I can help set that up." Then move on.
+**napari-mcp is opt-in.** Only set up if the user explicitly asks or needs interactive annotation. Don't offer unless relevant.
 
-See `references/cookbook-visualization.md` for all display patterns.
+See `references/cookbook-visualization.md` for the auto-open pattern and all display code.
 
 ## State Files
 
