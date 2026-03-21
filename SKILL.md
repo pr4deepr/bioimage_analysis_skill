@@ -43,13 +43,15 @@ Four rules:
 - Adapt: biology terms → run directly, explain in scientific terms. Code terms → show code
 - Report results in scientific language matching the user's domain
 
-## Visualization
+## Visualization & Results
 
-**Save + auto-open.** Every visual output is saved to the `analysis/` folder and automatically opened in the user's default image viewer (`xdg-open` / `open` / `os.startfile`). This gives interactive feedback (zoom, pan, inspect) without any MCP setup. Use the `show_result()` helper from `references/cookbook-visualization.md`.
+**Save + auto-open.** Every visual output is saved and auto-opened in the user's default image viewer. This gives interactive feedback (zoom, pan, inspect) without any MCP setup.
 
-**napari-mcp is opt-in.** Only set up if the user explicitly asks or needs interactive annotation. Don't offer unless relevant.
+**Organized by run.** Use `ResultsManager` from `references/cookbook-results.md` to create structured output: `analysis/run_001_stardist_nuclei/01_raw/`, `02_segmentation/`, etc. Each run gets an HTML manifest with thumbnails, parameters, QC status — auto-opens in the browser. Multiple iterations create separate runs so the user can compare.
 
-See `references/cookbook-visualization.md` for the auto-open pattern and all display code.
+**napari-mcp is opt-in.** Only set up if the user explicitly asks or needs interactive annotation.
+
+See `references/cookbook-visualization.md` for display patterns and `references/cookbook-results.md` for the results manager.
 
 ## State Files
 
@@ -76,13 +78,13 @@ Use the segmentation decision tree (`references/segmentation.md`) to pick the ap
 Before running segmentation code, check the active env for the needed package. See `references/environment.md` — Quick Path first, Broader Scan only if needed. This takes milliseconds, not a background worker.
 
 ### 3. Execute
-Run the pipeline step by step. After every visual step: show matplotlib output, run automated QC checks, present results as preliminary — "Here's a first pass, does this look right?" Reference `references/cookbook-segmentation.md` and `references/cookbook-pipeline.md` for complete patterns.
+Initialize `ResultsManager("analysis", "short_description")` to create a run folder. Run the pipeline step by step, using `results.save_figure()` / `results.save_image()` / `results.save_csv()` to route outputs to the right step folders. After every visual step: the image auto-opens, run automated QC checks, present results as preliminary — "Here's a first pass, does this look right?" Reference `references/cookbook-pipeline.md` for complete patterns.
 
 ### 4. Iterate
-Adjust and re-run based on feedback. If not working after 2-3 tries: try a different tool, search forum.image.sc, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning. Don't over-tune — if parameters need drastic per-image adjustment, the approach is wrong.
+Adjust and re-run based on feedback — each iteration creates a **new run folder** so the user can compare. If not working after 2-3 tries: try a different tool, search forum.image.sc, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning.
 
 ### 5. Measure & Export
-Save organized outputs (labels, QC overlays, CSV tables). Reference `references/cookbook-measurements.md` for extraction patterns. Connect back to biology — answering the biological question is the endpoint, not raw measurements. Run automated QC checks before exporting — see `references/quality-control.md`.
+Save outputs via `ResultsManager`. Call `results.write_manifest()` at the end — it generates an HTML summary with thumbnails, parameters, QC status and auto-opens in the browser. This is the user's entry point for reviewing results. Connect back to biology — answering the biological question is the endpoint, not raw measurements.
 
 ## Slash Commands
 
@@ -105,6 +107,7 @@ Save organized outputs (labels, QC overlays, CSV tables). Reference `references/
 - `references/quality-control.md` — automated QC checks + manual checklist
 - `references/cookbook-io.md` — reading images, metadata, directory scanning
 - `references/cookbook-segmentation.md` — segmentation code patterns and tool usage
-- `references/cookbook-visualization.md` — matplotlib (default) and napari display patterns
+- `references/cookbook-visualization.md` — matplotlib display patterns, auto-open, napari opt-in
 - `references/cookbook-measurements.md` — measurement extraction and export code
-- `references/cookbook-pipeline.md` — complete end-to-end pipeline examples
+- `references/cookbook-results.md` — ResultsManager: run folders, step folders, HTML manifest
+- `references/cookbook-pipeline.md` — complete end-to-end pipeline examples using ResultsManager

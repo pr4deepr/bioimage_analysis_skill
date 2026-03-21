@@ -1,7 +1,7 @@
 # End-to-End Pipeline Cookbook
 
-Complete, runnable pipelines that wire together reading, segmentation, QC,
-measurement, and export. Use these as templates — adapt parameters to your data.
+Complete, runnable pipelines using `ResultsManager` from `cookbook-results.md`.
+Every run creates an organized folder with step subfolders and an HTML manifest.
 
 ---
 
@@ -14,56 +14,37 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
-import os, sys, subprocess
-from pathlib import Path
-from skimage.measure import regionprops_table, label as relabel
+from skimage.measure import regionprops_table, regionprops, label as relabel
 from skimage.segmentation import clear_border
-
-# ──────────────────────────────────────────────
-# SETUP — auto-open helper (see cookbook-visualization.md)
-# ──────────────────────────────────────────────
-os.makedirs("analysis", exist_ok=True)
-
-def show_result(filepath):
-    path = str(Path(filepath).resolve())
-    try:
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-    except Exception:
-        pass
-
-# ──────────────────────────────────────────────
-# 1. READ
-# ──────────────────────────────────────────────
-image = tifffile.imread("nuclei.tif")
-print(f"Image: {image.shape}, {image.dtype}, range [{image.min()}-{image.max()}]")
-
-pixel_size_um = 0.325  # from metadata — adjust for your microscope
-
-# ──────────────────────────────────────────────
-# 2. SEGMENT (StarDist — best default for round nuclei)
-# ──────────────────────────────────────────────
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
+# (paste ResultsManager from cookbook-results.md, or import if saved as module)
+
+# ── Initialize results ──
+results = ResultsManager("analysis", "stardist_nuclei")
+
+# ── 1. READ ──
+image = tifffile.imread("nuclei.tif")
+pixel_size_um = 0.325
+results.set_params(image="nuclei.tif", pixel_size_um=pixel_size_um,
+                   dtype=str(image.dtype), shape=str(image.shape))
+
+fig, ax = plt.subplots(figsize=(8, 8))
+ax.imshow(image, cmap="gray")
+ax.set_title(f"Raw image ({image.shape[0]}×{image.shape[1]}, {image.dtype})")
+results.save_figure(fig, "raw_preview.png", step="01_raw")
+
+# ── 2. SEGMENT (StarDist) ──
 image_norm = normalize(image, pmin=1, pmax=99.8)
 model = StarDist2D.from_pretrained("2D_versatile_fluo")
 labels, details = model.predict_instances(image_norm, prob_thresh=0.5, nms_thresh=0.3)
-print(f"Segmented: {labels.max()} objects")
+results.set_params(model="StarDist 2D_versatile_fluo", prob_thresh=0.5, nms_thresh=0.3)
+results.log(f"Segmented: {labels.max()} objects")
 
-# ──────────────────────────────────────────────
-# 3. POST-PROCESS
-# ──────────────────────────────────────────────
-# Remove border objects (incomplete measurements)
+# Post-process
 labels = clear_border(labels)
 labels = relabel(labels > 0, connectivity=1)
-
-# Remove small debris (< 50% of median area)
-from skimage.measure import regionprops
 areas = [p.area for p in regionprops(labels)]
 if areas:
     min_area = int(np.median(areas) * 0.3)
@@ -71,29 +52,38 @@ if areas:
         if region.area < min_area:
             labels[labels == region.label] = 0
     labels = relabel(labels > 0, connectivity=1)
-print(f"After cleanup: {labels.max()} objects")
+results.log(f"After cleanup: {labels.max()} objects")
 
-# ──────────────────────────────────────────────
-# 4. QC — automated checks
-# ──────────────────────────────────────────────
-# (paste run_qc_checks from quality-control.md, or import if saved as module)
-# qc = run_qc_checks(labels, image, pixel_size_um)
-# print(print_qc_report(qc))
+# Save labels + overlay
+results.save_image(labels, "labels.tif", step="02_segmentation",
+                   description=f"{labels.max()} objects")
 
-# QC — visual overlay
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.imshow(image, cmap="gray")
 labels_masked = np.ma.masked_where(labels == 0, labels)
 ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} nuclei")
-plt.tight_layout()
-plt.savefig("analysis/qc_overlay.png", dpi=150, bbox_inches="tight")
-plt.close()
-show_result("analysis/qc_overlay.png")
+results.save_figure(fig, "overlay.png", step="02_segmentation",
+                    description="Segmentation overlay on raw image")
 
-# ──────────────────────────────────────────────
-# 5. MEASURE
-# ──────────────────────────────────────────────
+# ── 3. QC ──
+# qc = run_qc_checks(labels, image)  # from quality-control.md
+# results.set_qc(qc)
+# results.save_text(print_qc_report(qc), "qc_report.txt", step="03_qc")
+
+fig, ax = plt.subplots(figsize=(8, 5))
+cal_areas = [p.area * pixel_size_um**2 for p in regionprops(labels)]
+ax.hist(cal_areas, bins=30, edgecolor="black", linewidth=0.5, color="#4C72B0")
+ax.axvline(np.median(cal_areas), color="red", linestyle="--",
+           label=f"Median: {np.median(cal_areas):.1f} µm²")
+ax.set_xlabel("Area (µm²)")
+ax.set_ylabel("Count")
+ax.set_title(f"Size distribution (n={len(cal_areas)})")
+ax.legend()
+results.save_figure(fig, "histogram_areas.png", step="03_qc",
+                    description="Object size distribution")
+
+# ── 4. MEASURE & EXPORT ──
 props = pd.DataFrame(regionprops_table(
     labels, intensity_image=image,
     properties=("label", "area", "eccentricity", "solidity",
@@ -105,18 +95,12 @@ props = props.rename(columns={
     "mean_intensity": "mean_intensity_au",
     "max_intensity": "max_intensity_au",
 })
+results.save_csv(props, "measurements.csv", step="04_measurements",
+                 description=f"{len(props)} nuclei measured")
 
-# ──────────────────────────────────────────────
-# 6. EXPORT
-# ──────────────────────────────────────────────
-tifffile.imwrite("analysis/labels.tif", labels.astype(np.int32), compression="zlib")
-props.to_csv("analysis/measurements.csv", index=False)
-
-# Summary
-print(f"\nResults: {len(props)} nuclei")
-print(f"  Median area: {props['area_um2'].median():.1f} µm²")
-print(f"  Median intensity: {props['mean_intensity_au'].median():.1f} a.u.")
-print(f"  Saved: analysis/labels.tif, analysis/measurements.csv")
+# ── MANIFEST — opens in browser ──
+results.write_manifest()
+print(f"\nDone: {len(props)} nuclei → {results.run_dir}")
 ```
 
 ---
@@ -130,52 +114,33 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
-import os, sys, subprocess
-from pathlib import Path
 from skimage.measure import regionprops_table, regionprops, label as relabel
 from skimage.segmentation import clear_border
-
-os.makedirs("analysis", exist_ok=True)
-
-def show_result(filepath):
-    path = str(Path(filepath).resolve())
-    try:
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-    except Exception:
-        pass
-
-# ──────────────────────────────────────────────
-# 1. READ
-# ──────────────────────────────────────────────
-image = tifffile.imread("cells.tif")
-print(f"Image: {image.shape}, {image.dtype}")
-
-pixel_size_um = 0.65
-
-# ──────────────────────────────────────────────
-# 2. SEGMENT (Cellpose)
-# ──────────────────────────────────────────────
 from cellpose import models
 
+# (paste ResultsManager from cookbook-results.md)
+
+# ── Initialize results ──
+results = ResultsManager("analysis", "cellpose_cells")
+
+# ── 1. READ ──
+image = tifffile.imread("cells.tif")
+pixel_size_um = 0.65
+results.set_params(image="cells.tif", pixel_size_um=pixel_size_um)
+
+# ── 2. SEGMENT (Cellpose) ──
 model = models.Cellpose(model_type="cyto3", gpu=True)
-# Set diameter from manual measurement of ~5 cells, or None for auto
 labels, flows, styles, diams = model.eval(
     image, diameter=None, channels=[0, 0],
     flow_threshold=0.4, cellprob_threshold=0.0,
 )
-print(f"Segmented: {labels.max()} cells (est. diameter: {diams:.0f} px)")
+results.set_params(model="Cellpose cyto3", diameter=f"{diams:.0f} (auto)",
+                   flow_threshold=0.4, cellprob_threshold=0.0)
+results.log(f"Segmented: {labels.max()} cells")
 
-# ──────────────────────────────────────────────
-# 3. POST-PROCESS
-# ──────────────────────────────────────────────
+# ── 3. POST-PROCESS ──
 labels = clear_border(labels)
 labels = relabel(labels > 0, connectivity=1)
-
 areas = [p.area for p in regionprops(labels)]
 if areas:
     min_area = int(np.median(areas) * 0.2)
@@ -183,27 +148,20 @@ if areas:
         if region.area < min_area:
             labels[labels == region.label] = 0
     labels = relabel(labels > 0, connectivity=1)
-print(f"After cleanup: {labels.max()} cells")
+results.log(f"After cleanup: {labels.max()} cells")
 
-# ──────────────────────────────────────────────
-# 4. QC — visual
-# ──────────────────────────────────────────────
+# Save labels + overlay
+results.save_image(labels, "labels.tif", step="02_segmentation",
+                   description=f"{labels.max()} cells")
+
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.imshow(image, cmap="gray")
 labels_masked = np.ma.masked_where(labels == 0, labels)
 ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} cells")
-plt.tight_layout()
-plt.savefig("analysis/qc_overlay.png", dpi=150, bbox_inches="tight")
-plt.close()
-show_result("analysis/qc_overlay.png")
+results.save_figure(fig, "overlay.png", step="02_segmentation")
 
-# ──────────────────────────────────────────────
-# 5. MEASURE & EXPORT
-# ──────────────────────────────────────────────
-import os
-os.makedirs("analysis", exist_ok=True)
-
+# ── 4. MEASURE & EXPORT ──
 props = pd.DataFrame(regionprops_table(
     labels, intensity_image=image,
     properties=("label", "area", "eccentricity", "solidity",
@@ -214,55 +172,50 @@ props = props.rename(columns={
     "mean_intensity": "mean_intensity_au",
     "max_intensity": "max_intensity_au",
 })
+results.save_csv(props, "measurements.csv", step="04_measurements",
+                 description=f"{len(props)} cells measured")
 
-tifffile.imwrite("analysis/labels.tif", labels.astype(np.int32), compression="zlib")
-props.to_csv("analysis/measurements.csv", index=False)
-
-print(f"\nResults: {len(props)} cells")
-print(f"  Median area: {props['area_um2'].median():.1f} µm²")
+results.write_manifest()
+print(f"\nDone: {len(props)} cells → {results.run_dir}")
 ```
 
 ---
 
 ## Pipeline 3: Batch Processing (multiple images)
 
-Process a directory of images with the same pipeline. Collect all measurements
-into one CSV with a filename column.
+Process a directory of images. Each image gets its own labels file;
+all measurements go into one combined CSV. Uses a single run folder.
 
 ```python
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import tifffile
-import os
 from pathlib import Path
 from skimage.measure import regionprops_table, regionprops, label as relabel
 from skimage.segmentation import clear_border
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
-# ──────────────────────────────────────────────
-# CONFIG
-# ──────────────────────────────────────────────
-input_dir = Path("images/")
-output_dir = Path("analysis/")
-output_dir.mkdir(exist_ok=True)
+# (paste ResultsManager from cookbook-results.md)
 
+# ── Config ──
+input_dir = Path("images/")
 pixel_size_um = 0.325
 image_files = sorted(input_dir.glob("*.tif"))
-print(f"Found {len(image_files)} images")
 
-# Load model once (not per-image)
+results = ResultsManager("analysis", f"batch_stardist_{len(image_files)}imgs")
+results.set_params(input_dir=str(input_dir), n_images=len(image_files),
+                   pixel_size_um=pixel_size_um, model="StarDist 2D_versatile_fluo")
+
+# Load model once
 model = StarDist2D.from_pretrained("2D_versatile_fluo")
 
-# ──────────────────────────────────────────────
-# PROCESS
-# ──────────────────────────────────────────────
+# ── Process ──
 all_measurements = []
 
 for img_path in image_files:
-    print(f"Processing {img_path.name}...")
-
-    # Read
+    results.log(f"Processing {img_path.name}")
     image = tifffile.imread(str(img_path))
 
     # Segment
@@ -280,11 +233,10 @@ for img_path in image_files:
                 labels[labels == region.label] = 0
         labels = relabel(labels > 0, connectivity=1)
 
-    # Save labels
-    tifffile.imwrite(
-        str(output_dir / f"{img_path.stem}_labels.tif"),
-        labels.astype(np.int32), compression="zlib",
-    )
+    # Save labels (suppress auto-open during batch)
+    results.save_image(labels, f"{img_path.stem}_labels.tif",
+                       step="02_segmentation",
+                       description=f"{labels.max()} objects")
 
     # Measure
     props = pd.DataFrame(regionprops_table(
@@ -296,14 +248,23 @@ for img_path in image_files:
     props["filename"] = img_path.name
     all_measurements.append(props)
 
-    print(f"  → {labels.max()} objects")
+    results.log(f"  {img_path.name}: {labels.max()} objects")
 
-# ──────────────────────────────────────────────
-# EXPORT
-# ──────────────────────────────────────────────
+# ── Export combined ──
 combined = pd.concat(all_measurements, ignore_index=True)
-combined.to_csv(output_dir / "all_measurements.csv", index=False)
+results.save_csv(combined, "all_measurements.csv", step="04_measurements",
+                 description=f"{len(combined)} objects from {len(image_files)} images")
 
-print(f"\nDone: {len(combined)} total objects from {len(image_files)} images")
-print(f"Saved to {output_dir / 'all_measurements.csv'}")
+# Summary plot
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.hist(combined["area_um2"], bins=50, edgecolor="black", linewidth=0.5, color="#4C72B0")
+ax.set_xlabel("Area (µm²)")
+ax.set_ylabel("Count")
+ax.set_title(f"All objects (n={len(combined)} from {len(image_files)} images)")
+results.save_figure(fig, "histogram_all_areas.png", step="03_qc",
+                    description="Combined size distribution", show=False)
+
+# ── Manifest ──
+results.write_manifest()
+print(f"\nDone: {len(combined)} objects from {len(image_files)} images → {results.run_dir}")
 ```

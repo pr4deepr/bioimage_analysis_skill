@@ -1,24 +1,30 @@
 # Visualization Cookbook
 
-Visual feedback is core to this skill. Every analysis step saves output to the
-`analysis/` folder and **auto-opens it** so the user sees results immediately.
+Visual feedback is core to this skill. Every analysis step saves output to an
+organized run folder and **auto-opens it** so the user sees results immediately.
 
 ---
 
-## Auto-Open Pattern
+## Results Management
 
-Every visualization should: save to `analysis/`, then open automatically.
-Use this helper at the top of every analysis script.
+Use `ResultsManager` from `references/cookbook-results.md` for full analyses.
+It creates run folders, step folders, and an HTML manifest.
 
 ```python
-import os
-import sys
-import subprocess
+# Full analysis — use ResultsManager
+results = ResultsManager("analysis", "stardist_nuclei")
+results.save_figure(fig, "overlay.png", step="02_segmentation")
+results.write_manifest()  # auto-opens summary in browser
+```
+
+For quick one-off plots, use the lightweight `show_result()` helper:
+
+```python
+import os, sys, subprocess
 from pathlib import Path
 
 def show_result(filepath):
-    """Save is already done — now open the file so the user sees it immediately.
-    Cross-platform: uses the OS default image viewer."""
+    """Open a saved file in the OS default viewer."""
     path = str(Path(filepath).resolve())
     try:
         if sys.platform == "win32":
@@ -28,25 +34,11 @@ def show_result(filepath):
         else:
             subprocess.Popen(["xdg-open", path])
     except Exception:
-        pass  # silent fail — file is saved regardless
+        pass
 ```
 
-**Usage pattern** — every plot ends with `savefig` + `show_result`:
-
-```python
-plt.savefig("analysis/segmentation_overlay.png", dpi=150, bbox_inches="tight")
-plt.close()
-show_result("analysis/segmentation_overlay.png")
-```
-
-The user's default image viewer opens automatically. They can zoom, pan, and
-inspect the result while Claude waits for feedback. No napari, no MCP, no setup.
-
-**Always create the output directory first:**
-
-```python
-os.makedirs("analysis", exist_ok=True)
-```
+See `references/cookbook-results.md` for the full `ResultsManager` class, folder
+structure, manifest generation, and cleanup utilities.
 
 ---
 
