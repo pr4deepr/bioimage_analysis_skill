@@ -1,46 +1,114 @@
 # Environment
 
-## Quick Environment Check
-
-No background scanner needed. Run inline:
-
-```bash
-# Find the active Python
-which python  # Linux/Mac
-where python  # Windows
-
-# Check what's installed (one call)
-python -c "
-import importlib, subprocess
-for pkg in ['cellpose','stardist','skimage','napari','napari_mcp','bioio','tifffile','nnunetv2']:
-    spec = importlib.util.find_spec(pkg)
-    if spec:
-        mod = importlib.import_module(pkg)
-        print(f'{pkg}={getattr(mod, \"__version__\", \"installed\")}')
-    else:
-        print(f'{pkg}=not found')
-"
-```
-
-If the active env doesn't have what's needed, ask the user which Python/env to use.
+How to find tools and check versions. Designed to be fast — check the active env
+first, scan others only if needed.
 
 ---
 
-## GPU Detection
+## Quick Path (90% of cases)
 
-Check before recommending DL segmentation — CPU inference on large datasets can take hours.
+Most users already have an active conda/mamba environment. Check it first.
 
-```bash
-python -c "
-import torch
-print(f'CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
-"
+```python
+import sys, os, glob
+
+def check_active_env():
+    """Check what's available in the currently active Python environment.
+    Returns a dict of package_name -> bool (installed or not).
+    Takes milliseconds — no imports, just filesystem checks."""
+
+    sp_dirs = glob.glob(os.path.join(sys.prefix, "lib", "python*", "site-packages")) + \
+              glob.glob(os.path.join(sys.prefix, "Lib", "site-packages"))
+    if not sp_dirs:
+        return {}
+
+    sp = sp_dirs[0]
+    packages = {}
+    for pkg in ['napari', 'napari_mcp', 'cellpose', 'stardist',
+                'skimage', 'bioio', 'nnunetv2', 'tifffile']:
+        packages[pkg] = os.path.isdir(os.path.join(sp, pkg))
+    return packages
 ```
 
-If no GPU: warn user that DL segmentation will be slow on large datasets. Cellpose on CPU: ~30-60s per 1024x1024 image. StarDist is faster (~5-10s). For large batches without GPU, consider classical methods first.
+Or as a one-liner shell command:
+
+```bash
+ls "$(python -c 'import site; print(site.getsitepackages()[0])')" 2>/dev/null | grep -E "^(napari|cellpose|stardist|skimage|bioio|nnunetv2|tifffile)$"
+```
+
+**If the active env has what you need → use it. Done.** No further scanning.
+
+---
+
+## Broader Scan (only when active env is missing tools)
+
+Only run this if the active environment is missing a required package (e.g., user
+needs Cellpose but the active env doesn't have it).
+
+### Step 1: List conda environments
+
+```python
+import subprocess, json
+result = subprocess.run(["conda", "env", "list", "--json"],
+    capture_output=True, text=True, timeout=10)
+env_paths = json.loads(result.stdout).get("envs", [])
+```
+
+If `conda` not found, try `mamba env list --json`.
+
+### Step 2: Filesystem check on candidates
+
+Check `site-packages/` for the specific package you need. Don't scan everything —
+just look for what's missing.
+
+```python
+import os, glob
+
+def find_package_in_envs(env_paths, package_name):
+    """Find which conda envs have a specific package installed.
+    Milliseconds per env — no Python startup needed."""
+    matches = []
+    for env_path in env_paths:
+        sp_dirs = glob.glob(os.path.join(env_path, "Lib", "site-packages")) + \
+                  glob.glob(os.path.join(env_path, "lib", "python*", "site-packages"))
+        if not sp_dirs:
+            continue
+        if os.path.isdir(os.path.join(sp_dirs[0], package_name)):
+            matches.append(env_path)
+    return matches
+```
+
+### Step 3: Version check (only on the env you'll use)
+
+```python
+def get_version(env_python, package_name):
+    """Get exact version of one package. Only call on the env you chose."""
+    result = subprocess.run([env_python, "-c",
+        f"import {package_name}; print({package_name}.__version__)"],
+        capture_output=True, text=True, timeout=15)
+    return result.stdout.strip() if result.returncode == 0 else None
+```
+
+Where to find the env's Python:
+```
+Windows:   {env_path}/python.exe
+Linux/Mac: {env_path}/bin/python
+```
+
+---
+
+## Never Blind-Install
+
+Before running `pip install` or `conda install`:
+
+1. Check the active env (Quick Path above)
+2. If missing, scan other envs (Broader Scan above)
+3. Only install if no existing env has the package
+4. Install into the correct env, not whatever is active
+5. Prefer `conda install` over `pip install` in conda envs
+
+**If the user says "I use my cellpose env for this" → trust them, activate that
+env, skip scanning.**
 
 ---
 
@@ -61,50 +129,38 @@ Check before recommending any specific model or API.
 
 ---
 
-## Common Errors and Fixes
+## napari Viewer Setup
 
-| Error | Cause | Fix |
-|---|---|---|
-| `CUDA out of memory` | Image too large or batch too big for GPU VRAM | Set `gpu=False`, reduce image size, or process in tiles |
-| `ValueError: ndim` (StarDist) | Passed 3D array to 2D model or vice versa | Check image dimensions; extract single Z-slice or max-project |
-| `ModuleNotFoundError: bioio_czi` | BioIO reader plugin not installed | `pip install bioio-czi` (or -lif, -nd2 for other formats) |
-| `No module named 'cellpose'` | Wrong Python env active | Activate the correct conda env first |
-| Cellpose returns empty masks | Diameter estimate way off, or wrong channels | Set `diameter` manually; check `channels` argument |
-| StarDist predicts nothing | Input not normalized or wrong dtype | Use `csbdeep.utils.normalize(image)` before prediction |
+> See: cookbook-visualization.md § napari Setup & Connection
+
+napari-mcp is **opt-in**, not required. matplotlib is the default viewer.
+Only set up napari-mcp if the user wants interactive exploration or already
+has napari running.
 
 ---
 
-## napari-mcp Setup
+## FIJI (optional)
 
-napari-mcp must be **registered as an MCP server in Claude Code** — not just launched as a subprocess.
-
-```bash
-# Check if already registered
-claude mcp list
-
-# Install into the napari environment
-{viewer_python} -m pip install napari-mcp
-
-# Register as MCP server (use full absolute path to Python)
-claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp
-
-# Verify — look for napari tools (session_information, add_image, add_labels, take_screenshot)
-```
-
-If napari < 0.5.0, warn: napari-mcp may not work. Suggest upgrading.
-
-If setup fails at any step: tell the user what failed, proceed with matplotlib for all visuals.
+fiji_mcp (github.com/NicoKiaru/fiji_mcp) — proof-of-concept MCP server for FIJI.
+Only suggest for users who specifically want FIJI or need FIJI-specific plugins
+(TrackMate, MorphoLibJ).
 
 ---
 
 ## Tools Quick Reference
 
-| Tool | Purpose |
-|---|---|
-| BioIO | Read proprietary microscopy formats (CZI, LIF, ND2, OME-TIFF) |
-| scikit-image | Thresholding, morphology, watershed, regionprops |
-| Cellpose | DL instance segmentation, pretrained + custom models |
-| StarDist | DL segmentation for nuclei, very fast |
-| nnUNetv2 | Self-configuring DL segmentation, requires custom training |
-| napari | Interactive viewer, QC overlays, annotation |
-| tifffile | Fallback TIFF reader, always available |
+### Python
+- **BioIO** — read microscopy formats (CZI, LIF, ND2, OME-TIFF)
+- **scikit-image** — thresholding, morphology, watershed, regionprops
+- **scipy.ndimage** — labeling, distance transforms
+- **napari** — viewer, QC overlays, annotation (Labels layer)
+- **Cellpose** — DL instance segmentation, pretrained models
+- **StarDist** — DL segmentation for nuclei, very fast
+- **nnUNetv2** — self-configuring DL segmentation, train on your data
+- **tifffile** — fallback TIFF reader, always available
+
+### FIJI
+- **Bio-Formats** — read proprietary formats (built-in)
+- **Threshold / Analyze Particles** — classical segmentation + measurement
+- **MorphoLibJ** — advanced morphological operations
+- **StarDist plugin** — StarDist in FIJI without Python

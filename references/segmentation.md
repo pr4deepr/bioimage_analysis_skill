@@ -2,138 +2,234 @@
 
 How to go from a preprocessed image to a labeled mask where each object has a unique ID.
 
-## Decision Tree
+## Segmentation Approaches
 
-Pick the simplest approach that could work. Move to DL only if classical methods fail.
+### Thresholding (Classical)
 
-| Image type | Objects | Recommended approach |
+Convert a grayscale image to binary (object vs background) based on intensity.
+
+**How it works**: pick an intensity cutoff — pixels above it are "object", below are
+"background". Automated methods (Otsu, Li, Triangle, etc.) compute the cutoff from
+the image histogram.
+
+**When it works well**:
+- High contrast between objects and background
+- Objects don't touch each other
+- Relatively uniform background intensity (or after illumination correction)
+
+**When it fails**:
+- Touching/overlapping objects get merged into one blob
+- Low contrast or noisy images produce fragmented masks
+- Brightfield / phase contrast images (halo artifacts confuse thresholding)
+
+**Key parameters**:
+- Threshold method: Otsu (good default for bimodal histograms), Li (minimizes cross-entropy,
+  good for dim objects), Triangle (good for skewed histograms with few bright objects),
+  Adaptive/local (handles uneven illumination by computing threshold per-region)
+- Minimum object size: filter out small noise detections after thresholding
+
+**Recommended tools**: scikit-image filters.threshold_otsu / threshold_li / threshold_local,
+FIJI Image > Adjust > Threshold (interactive), scipy.ndimage.label for connected components.
+
+> See: cookbook-segmentation.md § Otsu thresholding + connected components
+> See: cookbook-segmentation.md § Adaptive thresholding
+
+### Watershed
+
+Separates touching objects by treating the intensity image like a topographic surface and
+finding the "watershed lines" between intensity basins.
+
+**How it works**: find seeds (local intensity minima or maxima, depending on convention),
+then grow regions from seeds until they meet at boundaries.
+
+**When it works well**:
+- Touching round objects (nuclei) where thresholding alone merges them
+- Combined with a distance transform on a binary mask: threshold first, compute distance
+  from background, then watershed on the distance map
+
+**When it fails**:
+- Irregularly shaped objects (over-segments into fragments)
+- Very dense clusters where seeds can't be reliably identified
+- Objects with concavities (watershed splits at every concavity)
+
+**Key parameters**:
+- Seed detection: minimum distance between seeds controls over/under-segmentation
+- Smoothing of the distance map before finding seeds (reduces over-segmentation)
+
+**Recommended tools**: scikit-image segmentation.watershed, scipy.ndimage.distance_transform_edt,
+FIJI Process > Binary > Watershed, MorphoLibJ (FIJI plugin for advanced morphological watershed).
+
+> See: cookbook-segmentation.md § Threshold + distance transform + watershed
+
+### Deep Learning Instance Segmentation
+
+Neural networks trained to detect and separate individual objects, even when touching.
+
+**How it works**: models learn object boundaries and shapes from training data. Inference
+produces per-pixel predictions that are decoded into individual object masks.
+
+**When it works well**:
+- Touching, overlapping, or irregularly shaped objects
+- Challenging modalities (brightfield, phase contrast)
+- Large datasets where manual thresholding would need constant tuning
+- When pretrained models exist for your object type
+
+**When it fails**:
+- Object type is very different from training data and no pretrained model fits
+- Very few objects in the dataset (hard to train custom models)
+- Extreme image artifacts that weren't in training data
+
+**Available pretrained models and what they're good for**:
+
+| Model | Best for | Notes |
 |---|---|---|
-| Fluorescence, nuclei, not touching | Round, well-separated | StarDist `2D_versatile_fluo` |
-| Fluorescence, nuclei, touching | Round, clustered | Cellpose `nuclei` or threshold + watershed |
-| Fluorescence, whole cells | Irregular shapes | Cellpose `cyto3` (3.x) or `cyto2` (2.x) |
-| Brightfield / phase contrast | Cells | Cellpose `livecell` |
-| H&E histology | Nuclei | StarDist `2D_versatile_he` |
-| High contrast, non-touching | Any | Otsu threshold + connected components |
-| Touching objects, clean signal | Round-ish | Threshold + distance transform + watershed |
-| Nothing works with pretrained | — | Custom training (20-50 annotations for Cellpose, 50+ for nnUNetv2) |
+| Cellpose `cyto2` / `cyto3` | Whole cells (fluorescence + brightfield) | Needs cytoplasm channel ± nuclear channel |
+| Cellpose `nuclei` | Nuclei in fluorescence | Fast, works well on DAPI/Hoechst |
+| Cellpose `livecell` | Cells in brightfield/phase contrast | Trained on diverse cell lines |
+| StarDist `2D_versatile_fluo` | Nuclei in fluorescence | Very fast, assumes star-convex shapes |
+| StarDist `2D_versatile_he` | Nuclei in H&E histology | |
+| Mesmer / DeepCell | Nuclear + whole-cell in multiplexed imaging | Purpose-built for spatial proteomics |
+| nnUNetv2 | Anything, with custom training data | No pretrained models — you train on your data |
 
----
+**Key parameters** (vary by tool):
+- Cellpose: `diameter` (expected object size in pixels — critical to set correctly),
+  `flow_threshold` (confidence cutoff), `cellprob_threshold` (how aggressive to detect)
+- StarDist: `prob_thresh` (detection confidence), `nms_thresh` (overlap handling)
 
-## Classical Approaches
+**When to train a custom model**:
+- Pretrained models produce clearly wrong results after parameter tuning
+- Your objects have unusual morphology not represented in training data
+- You need very high accuracy for publication
+- Budget: ~20-50 annotated images for Cellpose fine-tuning, 50+ for nnUNetv2
 
-**Otsu thresholding**: `skimage.filters.threshold_otsu` → binary → `skimage.measure.label`. Works when histogram is bimodal and objects don't touch.
-
-**Adaptive thresholding**: `skimage.filters.threshold_local(image, block_size=51)`. Use when illumination is uneven.
-
-**Watershed for touching objects**: threshold → `ndi.distance_transform_edt` → `peak_local_max(distance, min_distance=10)` → `watershed(-distance, markers, mask=binary)`. Set `min_distance` to ~half the smallest expected object diameter.
-
----
-
-## Deep Learning — Cellpose
-
-### Cellpose >= 3.0
-
-```python
-from cellpose import models
-
-model = models.Cellpose(model_type="cyto3", gpu=True)
-# channels: [cytoplasm, nucleus]. [0,0] for grayscale
-# diameter: None = auto-estimate (recommended first pass)
-# flow_threshold: 0.1 (strict) to 1.0 (permissive), default 0.4
-# cellprob_threshold: -6.0 (include dim) to 6.0 (only bright), default 0.0
-masks, flows, styles, diams = model.eval(
-    image, diameter=None, channels=[0, 0],
-    flow_threshold=0.4, cellprob_threshold=0.0,
-)
-```
-
-### Cellpose 2.x
-
-Same API but **no `cyto3`**. Use `cyto2` (recommended) or `cyto` or `nuclei`.
-
-```python
-from cellpose import models
-model = models.Cellpose(model_type="cyto2", gpu=True)
-masks, flows, styles, diams = model.eval(
-    image, diameter=None, channels=[0, 0],
-    flow_threshold=0.4, cellprob_threshold=0.0,
-)
-```
-
-### Custom Cellpose model
-
-```python
-from cellpose import models
-model = models.CellposeModel(pretrained_model="path/to/model", gpu=True)
-masks, flows, styles = model.eval(
-    image, diameter=None, channels=[0, 0],
-)
-```
-
----
-
-## Deep Learning — StarDist
-
-```python
-from stardist.models import StarDist2D
-from csbdeep.utils import normalize
-
-image_norm = normalize(image, pmin=1, pmax=99.8)
-model = StarDist2D.from_pretrained("2D_versatile_fluo")
-# prob_thresh: higher = fewer detections (default ~0.5)
-# nms_thresh: lower = merge more overlapping detections (default ~0.3)
-labels, details = model.predict_instances(
-    image_norm, prob_thresh=0.5, nms_thresh=0.3,
-)
-```
-
-Custom model: `StarDist2D(None, name="my_model", basedir="path/to/models")`.
+> See: cookbook-segmentation.md § Deep Learning — Cellpose
+> See: cookbook-segmentation.md § Deep Learning — StarDist
 
 ---
 
 ## Post-Processing
 
-Combined pipeline — each step is optional:
+After initial segmentation, clean up the mask before measurement.
 
-```python
-from scipy.ndimage import binary_fill_holes
-from skimage.measure import regionprops, label as relabel
-from skimage.morphology import binary_closing, disk
-from skimage.segmentation import clear_border
+### Filtering Small Objects
+Remove objects below a minimum area threshold. These are usually debris, noise, or
+segmentation fragments. Set the threshold based on the expected minimum cell size for
+your cell type.
 
-def postprocess_labels(labels, min_area=0, remove_border=False,
-                       fill_holes=False, smooth_radius=0):
-    result = labels.copy()
-    if remove_border:
-        result = clear_border(result)
-    if fill_holes:
-        filled = np.zeros_like(result)
-        for i in range(1, result.max() + 1):
-            filled[binary_fill_holes(result == i)] = i
-        result = filled
-    if smooth_radius > 0:
-        smoothed = np.zeros_like(result)
-        selem = disk(smooth_radius)
-        for i in range(1, result.max() + 1):
-            smoothed[binary_closing(result == i, selem)] = i
-        result = smoothed
-    if min_area > 0:
-        for p in regionprops(result):
-            if p.area < min_area:
-                result[result == p.label] = 0
-    return relabel(result > 0, connectivity=1)
-```
+### Filtering by Shape
+Remove objects with extreme shape metrics (very high eccentricity, very low solidity).
+These are typically segmentation artifacts, not real cells.
+
+### Removing Edge Objects
+Objects touching the image border have incomplete measurements. Remove them unless you
+only need counts (in which case, keep them for counting but exclude from shape/intensity
+measurements).
+
+### Filling Holes
+Binary masks sometimes have holes inside objects (from uneven staining or thresholding
+artifacts). Fill them unless the holes are biologically meaningful (e.g., donut-shaped
+cells, nuclear rings).
+
+### Smoothing Boundaries
+Jagged mask boundaries produce noisy perimeter and shape measurements. A light
+morphological closing (dilate then erode, kernel size 1-3) smooths boundaries without
+significantly changing area.
+
+> See: cookbook-segmentation.md § Post-Processing
 
 ---
 
-## When Automated Segmentation Fails
+## Decision Tree
 
-If 2-3 parameter combinations haven't worked, stop tuning and escalate:
+Follow this tree top-to-bottom. Take the first path that matches.
 
-1. **Interactive annotation + fine-tuning**: 20-50 manual annotations → fine-tune. Tools: Cellpose GUI, napari labels layer, QuPath
-2. **Search for published workflows**: papers with similar modality often describe their pipeline in methods/supplementary
-3. **Ask the community at forum.image.sc**: primary forum for bioimage analysis, monitored by tool developers
+```
+What are you segmenting?
+│
+├── Nuclei (round, fluorescence: DAPI/Hoechst)
+│   ├── Objects NOT touching → Otsu threshold + connected components
+│   └── Objects touching → StarDist 2D_versatile_fluo
+│       └── StarDist fails → Cellpose "nuclei"
+│
+├── Nuclei (H&E histology)
+│   └── StarDist 2D_versatile_he
+│       └── Fails → Cellpose "nuclei"
+│
+├── Whole cells (fluorescence, membrane/cytoplasm stain)
+│   └── Cellpose "cyto3" (or "cyto2" on Cellpose 2.x)
+│       └── Fails → threshold membrane → watershed
+│
+├── Cells (brightfield / phase contrast)
+│   └── Cellpose "livecell"
+│       └── Fails → Cellpose "cyto3"
+│
+├── Other objects (organelles, bacteria, custom shapes)
+│   ├── Round/convex → StarDist (may need custom training)
+│   ├── Irregular → Cellpose "cyto3"
+│   └── Very unusual → nnUNetv2 (requires custom training data)
+│
+└── Simple binary (high contrast, non-touching)
+    └── Otsu threshold + connected components
+        └── Touching → threshold + distance transform + watershed
+```
 
-## Generalization Warning
+**Key parameters to get right on the first try:**
+- **Cellpose `diameter`**: measure ~5 objects manually, take the average diameter in pixels. This single parameter matters most.
+- **StarDist `prob_thresh`**: start at 0.5. Lower if missing faint objects, raise if getting false positives.
+- **Watershed `min_distance`**: roughly half the smallest expected object diameter.
 
-Don't over-tune on sample data. Tune on a diverse sample (different conditions, batches, density ranges). Test on held-out images. If performance drops, simplify — the parameters are overfit.
+## Choosing Between Approaches — Principles
+
+**Start with the simplest approach that could work.** Try classical thresholding first
+if the images look clean. Move to DL only if thresholding fails. This saves time and
+keeps the pipeline simpler and more interpretable.
+
+**Evaluate on a representative sample, not one image.** A threshold that works on one
+image may fail on others with different staining intensity or density. Test on 10-20
+images spanning the range of conditions in your dataset.
+
+**Pretrained DL models are not magic.** They can fail on data that differs significantly
+from their training distribution. Always visually verify results rather than assuming
+a DL model is correct.
+
+**Hybrid approaches are fine.** For example: use StarDist for nuclear segmentation, then
+expand to whole-cell using classical watershed on a membrane channel. Mix methods based
+on what works for each step.
+
+---
+
+## Generalization: Don't Over-Tune on Sample Data
+
+A pipeline that's been tweaked to perfection on 3 sample images may fail on the rest of
+the dataset. This is especially common when:
+- Sample images are from one condition but the dataset spans multiple conditions
+- The "best" images were chosen for tuning (clean, high-contrast) but the dataset includes
+  harder cases (out-of-focus, low-density, unusual morphology)
+- Parameters were adjusted iteratively until the sample looked perfect, overfitting to
+  those specific images
+
+**Best practice**: tune on a small diverse sample (images from different conditions,
+batches, density ranges). After tuning, test on a held-out set the pipeline hasn't seen.
+If performance drops, the parameters are overfit — simplify.
+
+---
+
+## When Automated Segmentation Isn't Working
+
+If 2-3 parameter combinations haven't produced acceptable results, stop tuning and escalate:
+
+**Interactive annotation + fine-tuning**: have the user manually annotate 20-50 objects,
+then fine-tune the model on their data. This is almost always more productive than
+continued parameter tweaking. Tools for annotation:
+- Cellpose GUI (built-in annotation and retraining workflow)
+- napari with labels layer (freehand drawing, good for irregular shapes)
+- QuPath (tissue-level annotation, good for histology)
+
+**Search for published workflows**: many papers describe their segmentation pipeline in
+the methods or supplementary material. Search for papers with similar modality and
+biological question. Ask the user if they have reference publications.
+
+**Ask the community at forum.image.sc**: this is the primary forum for bioimage analysis,
+actively monitored by developers of CellProfiler, Cellpose, StarDist, napari, QuPath, and
+other tools. Users can post example images and get expert advice on approach selection and
+parameter tuning. Suggest this when the problem is genuinely difficult or unusual.
