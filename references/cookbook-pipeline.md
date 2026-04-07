@@ -1,7 +1,8 @@
 # End-to-End Pipeline Cookbook
 
 Complete, runnable pipelines. Each creates an organized `analysis/` folder with
-step subfolders. Uses `clean_labels()` from `bioimage_utils.py` for post-processing.
+step subfolders. Uses functions from `bioimage_utils.py` for post-processing,
+measurements, and results management.
 
 ---
 
@@ -11,30 +12,30 @@ The most common case: segment nuclei in a DAPI/Hoechst image, measure, export.
 
 ```python
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
-from skimage.measure import regionprops_table, regionprops
+from skimage.measure import regionprops
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
-from bioimage_utils import clean_labels, ResultsManager
+from bioimage_utils import clean_labels, extract_measurements, ResultsManager
 
 # ── Initialize ──
 results = ResultsManager("analysis", "stardist_nuclei")
 
 # ── 1. READ ──
 image = tifffile.imread("nuclei.tif")
-pixel_size_um = 0.325
+pixel_size_um = 0.325  # um/pixel — get from metadata or microscope settings
 results.set_params(image="nuclei.tif", pixel_size_um=pixel_size_um,
                    dtype=str(image.dtype), shape=str(image.shape))
 
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.imshow(image, cmap="gray")
-ax.set_title(f"Raw image ({image.shape[0]}×{image.shape[1]}, {image.dtype})")
+ax.set_title(f"Raw image ({image.shape[0]}x{image.shape[1]}, {image.dtype})")
 results.save_figure(fig, "raw_preview.png", step="01_raw")
 
 # ── 2. SEGMENT (StarDist) ──
+# StarDist REQUIRES explicit normalization — without it, predictions may be empty
 image_norm = normalize(image, pmin=1, pmax=99.8)
 model = StarDist2D.from_pretrained("2D_versatile_fluo")
 labels, details = model.predict_instances(image_norm, prob_thresh=0.5, nms_thresh=0.3)
@@ -64,8 +65,8 @@ fig, ax = plt.subplots(figsize=(8, 5))
 cal_areas = [p.area * pixel_size_um**2 for p in regionprops(labels)]
 ax.hist(cal_areas, bins=30, edgecolor="black", linewidth=0.5, color="#4C72B0")
 ax.axvline(np.median(cal_areas), color="red", linestyle="--",
-           label=f"Median: {np.median(cal_areas):.1f} µm²")
-ax.set_xlabel("Area (µm²)")
+           label=f"Median: {np.median(cal_areas):.1f} um2")
+ax.set_xlabel("Area (um2)")
 ax.set_ylabel("Count")
 ax.set_title(f"Size distribution (n={len(cal_areas)})")
 ax.legend()
@@ -73,22 +74,12 @@ results.save_figure(fig, "histogram_areas.png", step="03_qc",
                     description="Object size distribution")
 
 # ── 4. MEASURE & EXPORT ──
-props = pd.DataFrame(regionprops_table(
-    labels, intensity_image=image,
-    properties=("label", "area", "eccentricity", "solidity",
-                "mean_intensity", "max_intensity"),
-))
-props["area_um2"] = props["area"] * (pixel_size_um ** 2)
-props["integrated_intensity_au"] = props["mean_intensity"] * props["area"]
-props = props.rename(columns={
-    "mean_intensity": "mean_intensity_au",
-    "max_intensity": "max_intensity_au",
-})
+props = extract_measurements(labels, image, pixel_size_um=pixel_size_um)
 results.save_csv(props, "measurements.csv", step="04_measurements",
                  description=f"{len(props)} nuclei measured")
 
 results.write_manifest()
-print(f"\nDone: {len(props)} nuclei → {results.run_dir}")
+print(f"\nDone: {len(props)} nuclei -> {results.run_dir}")
 ```
 
 ---
@@ -97,24 +88,28 @@ print(f"\nDone: {len(props)} nuclei → {results.run_dir}")
 
 For cells with irregular shapes, cytoplasm stains, or touching objects.
 
+**Note**: This uses the Cellpose 3.x API (`models.Cellpose`). For Cellpose 4.x,
+use `models.CellposeModel` instead — `diameter` and `channels` are not needed.
+See `segmentation.md` for version-specific code.
+
 ```python
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
-from skimage.measure import regionprops_table, regionprops
 from cellpose import models
 
-from bioimage_utils import clean_labels, ResultsManager
+from bioimage_utils import clean_labels, extract_measurements, ResultsManager
 
 results = ResultsManager("analysis", "cellpose_cells")
 
 # ── 1. READ ──
 image = tifffile.imread("cells.tif")
-pixel_size_um = 0.65
+pixel_size_um = 0.65  # um/pixel
 results.set_params(image="cells.tif", pixel_size_um=pixel_size_um)
 
-# ── 2. SEGMENT (Cellpose) ──
+# ── 2. SEGMENT (Cellpose 3.x) ──
+# For Cellpose 4.x: use models.CellposeModel(model_type="cyto3", gpu=True)
+# and model.eval(image) — no diameter or channels needed.
 model = models.Cellpose(model_type="cyto3", gpu=True)
 labels, flows, styles, diams = model.eval(
     image, diameter=None, channels=[0, 0],
@@ -141,21 +136,12 @@ ax.set_title(f"Segmentation: {labels.max()} cells")
 results.save_figure(fig, "overlay.png", step="02_segmentation")
 
 # ── 4. MEASURE & EXPORT ──
-props = pd.DataFrame(regionprops_table(
-    labels, intensity_image=image,
-    properties=("label", "area", "eccentricity", "solidity",
-                "mean_intensity", "max_intensity"),
-))
-props["area_um2"] = props["area"] * (pixel_size_um ** 2)
-props = props.rename(columns={
-    "mean_intensity": "mean_intensity_au",
-    "max_intensity": "max_intensity_au",
-})
+props = extract_measurements(labels, image, pixel_size_um=pixel_size_um)
 results.save_csv(props, "measurements.csv", step="04_measurements",
                  description=f"{len(props)} cells measured")
 
 results.write_manifest()
-print(f"\nDone: {len(props)} cells → {results.run_dir}")
+print(f"\nDone: {len(props)} cells -> {results.run_dir}")
 ```
 
 ---
@@ -163,7 +149,8 @@ print(f"\nDone: {len(props)} cells → {results.run_dir}")
 ## Pipeline 3: Batch Processing (multiple images)
 
 Process a directory of images. Each image gets its own labels file;
-all measurements go into one combined CSV.
+all measurements go into one combined CSV. Wraps per-image processing
+in try/except so one corrupt file doesn't kill the entire batch.
 
 ```python
 import numpy as np
@@ -171,14 +158,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import tifffile
 from pathlib import Path
-from skimage.measure import regionprops_table, regionprops
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
-from bioimage_utils import clean_labels, ResultsManager
+from bioimage_utils import clean_labels, extract_measurements, ResultsManager
 
 input_dir = Path("images/")
-pixel_size_um = 0.325
+pixel_size_um = 0.325  # um/pixel
 image_files = sorted(input_dir.glob("*.tif"))
 
 results = ResultsManager("analysis", f"batch_stardist_{len(image_files)}imgs")
@@ -189,51 +175,55 @@ results.set_params(input_dir=str(input_dir), n_images=len(image_files),
 model = StarDist2D.from_pretrained("2D_versatile_fluo")
 
 all_measurements = []
+failed = []
 
 for img_path in image_files:
-    results.log(f"Processing {img_path.name}")
-    image = tifffile.imread(str(img_path))
+    try:
+        results.log(f"Processing {img_path.name}")
+        image = tifffile.imread(str(img_path))
 
-    # Segment
-    image_norm = normalize(image, pmin=1, pmax=99.8)
-    labels, _ = model.predict_instances(image_norm, prob_thresh=0.5, nms_thresh=0.3)
+        # Segment
+        image_norm = normalize(image, pmin=1, pmax=99.8)
+        labels, _ = model.predict_instances(image_norm, prob_thresh=0.5, nms_thresh=0.3)
 
-    # Post-process
-    labels, stats = clean_labels(labels, remove_border=True, min_area_fraction=0.3)
+        # Post-process
+        labels, stats = clean_labels(labels, remove_border=True, min_area_fraction=0.3)
 
-    # Save labels (show=False during batch to avoid opening hundreds of viewers)
-    results.save_image(labels, f"{img_path.stem}_labels.tif",
-                       step="02_segmentation",
-                       description=f"{stats['n_after']} objects")
+        # Save labels
+        results.save_image(labels, f"{img_path.stem}_labels.tif",
+                           step="02_segmentation",
+                           description=f"{stats['n_after']} objects")
 
-    # Measure
-    props = pd.DataFrame(regionprops_table(
-        labels, intensity_image=image,
-        properties=("label", "area", "eccentricity", "solidity",
-                    "mean_intensity", "max_intensity"),
-    ))
-    props["area_um2"] = props["area"] * (pixel_size_um ** 2)
-    props["filename"] = img_path.name
-    all_measurements.append(props)
+        # Measure
+        props = extract_measurements(labels, image, pixel_size_um=pixel_size_um)
+        props["filename"] = img_path.name
+        all_measurements.append(props)
 
-    results.log(f"  {img_path.name}: {stats['n_after']} objects")
+        results.log(f"  {img_path.name}: {stats['n_after']} objects")
+    except Exception as e:
+        results.log(f"  FAILED {img_path.name}: {e}")
+        failed.append(img_path.name)
 
 # Export combined
-combined = pd.concat(all_measurements, ignore_index=True)
-results.save_csv(combined, "all_measurements.csv", step="04_measurements",
-                 description=f"{len(combined)} objects from {len(image_files)} images")
+if all_measurements:
+    combined = pd.concat(all_measurements, ignore_index=True)
+    results.save_csv(combined, "all_measurements.csv", step="04_measurements",
+                     description=f"{len(combined)} objects from {len(image_files) - len(failed)} images")
 
-# Summary plot
-fig, ax = plt.subplots(figsize=(8, 5))
-ax.hist(combined["area_um2"], bins=50, edgecolor="black", linewidth=0.5, color="#4C72B0")
-ax.set_xlabel("Area (µm²)")
-ax.set_ylabel("Count")
-ax.set_title(f"All objects (n={len(combined)} from {len(image_files)} images)")
-results.save_figure(fig, "histogram_all_areas.png", step="03_qc",
-                    description="Combined size distribution", show=False)
+    # Summary plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(combined["area_um2"], bins=50, edgecolor="black", linewidth=0.5, color="#4C72B0")
+    ax.set_xlabel("Area (um2)")
+    ax.set_ylabel("Count")
+    ax.set_title(f"All objects (n={len(combined)} from {len(image_files) - len(failed)} images)")
+    results.save_figure(fig, "histogram_all_areas.png", step="03_qc",
+                        description="Combined size distribution")
+
+if failed:
+    results.log(f"Failed images ({len(failed)}): {failed}")
 
 results.write_manifest()
-print(f"\nDone: {len(combined)} objects from {len(image_files)} images → {results.run_dir}")
+print(f"\nDone: {len(all_measurements)} images processed, {len(failed)} failed -> {results.run_dir}")
 ```
 
 ---
@@ -244,7 +234,7 @@ For whole-slide histology, OPAL multiplex, CometAssay mosaics, or any image too
 large to load into RAM at once. Uses BioIO's dask backend for lazy loading —
 only the requested tile is read from disk.
 
-**Workflow: crop → tune → full run.**
+**Workflow: crop -> tune -> full run.**
 
 ```python
 import numpy as np
@@ -282,6 +272,7 @@ crop = img.get_image_dask_data("YX", T=0, C=0, Z=0)
 crop = crop[cy:cy+crop_size, cx:cx+crop_size].compute()  # only 1024x1024 loaded
 
 # Tune segmentation parameters on the crop
+# Note: this uses Cellpose 3.x API. For 4.x, see segmentation.md.
 from cellpose import models
 model = models.Cellpose(model_type="cyto3", gpu=True)
 
@@ -289,16 +280,20 @@ for diameter in [30, 50, 80]:
     test_labels, _, _, _ = model.eval(crop, diameter=diameter, channels=[0, 0])
     print(f"  diameter={diameter}: {test_labels.max()} objects")
 
-best_diameter = 50  # ← set after reviewing crop results
+best_diameter = 50  # <- set after reviewing crop results
 
 # ── 3. TILED PROCESSING ──
 tile_size = 2048
-overlap = 256  # overlap should be > largest expected object diameter
+overlap = 256  # overlap must be > largest expected object diameter
 results = ResultsManager("analysis", "tiled_large_image")
-pixel_size_um = img.physical_pixel_sizes.Y or 1.0
+
+# Pixel size from metadata — None means uncalibrated (measurements in pixels)
+pixel_size_um = img.physical_pixel_sizes.Y
+if pixel_size_um is None:
+    print("WARNING: No pixel size in metadata. Measurements will be in pixels.")
 results.set_params(image=image_path, tile_size=tile_size, overlap=overlap,
                    diameter=best_diameter, full_shape=str(full_shape),
-                   pixel_size_um=pixel_size_um)
+                   pixel_size_um=pixel_size_um or "uncalibrated")
 
 # Get the 2D dask array for the channel we want
 lazy_plane = img.get_image_dask_data("YX", T=0, C=0, Z=0)
@@ -346,7 +341,8 @@ for y in range(0, full_shape[0], tile_size - overlap):
             # Adjust centroid to full-image coordinates
             props["centroid-0"] += y
             props["centroid-1"] += x
-            props["area_um2"] = props["area"] * (pixel_size_um ** 2)
+            if pixel_size_um is not None:
+                props["area_um2"] = props["area"] * (pixel_size_um ** 2)
             all_measurements.append(props)
 
         results.log(f"Tile ({y},{x}): {stats['n_after']} objects")
@@ -357,7 +353,7 @@ results.save_csv(combined, "all_measurements.csv", step="04_measurements",
                  description=f"{len(combined)} objects from tiled processing")
 
 results.write_manifest()
-print(f"\nDone: {len(combined)} objects → {results.run_dir}")
+print(f"\nDone: {len(combined)} objects -> {results.run_dir}")
 ```
 
 **Notes:**
@@ -408,6 +404,7 @@ mid_z = n_z // 2
 # C=0 selects channel 0 — change to the channel you want to segment
 test_plane = img.get_image_dask_data("YX", T=0, C=0, Z=mid_z).compute()
 
+# Note: this uses Cellpose 3.x API. For 4.x, see segmentation.md.
 from cellpose import models
 model = models.Cellpose(model_type="cyto3", gpu=True)
 
@@ -415,13 +412,17 @@ for diameter in [20, 40, 60]:
     test_labels, _, _, _ = model.eval(test_plane, diameter=diameter, channels=[0, 0])
     print(f"  diameter={diameter}: {test_labels.max()} objects")
 
-best_diameter = 40  # ← set after reviewing
+best_diameter = 40  # <- set after reviewing
 
 # ── 3. PROCESS PLANE-BY-PLANE ──
-pixel_size_um = img.physical_pixel_sizes.Y or 1.0
+# Pixel size from metadata — None means uncalibrated
+pixel_size_um = img.physical_pixel_sizes.Y
+if pixel_size_um is None:
+    print("WARNING: No pixel size in metadata. Measurements will be in pixels.")
 results = ResultsManager("analysis", "3d_planewise")
 results.set_params(image=image_path, n_z=n_z, n_t=n_t,
-                   plane_shape=str(plane_shape), diameter=best_diameter)
+                   plane_shape=str(plane_shape), diameter=best_diameter,
+                   pixel_size_um=pixel_size_um or "uncalibrated")
 
 all_measurements = []
 
@@ -445,7 +446,8 @@ for t in range(n_t):
             ))
             props["z_plane"] = z
             props["timepoint"] = t
-            props["area_um2"] = props["area"] * (pixel_size_um ** 2)
+            if pixel_size_um is not None:
+                props["area_um2"] = props["area"] * (pixel_size_um ** 2)
             all_measurements.append(props)
 
         if z % 10 == 0:
@@ -463,10 +465,10 @@ ax.plot(per_plane.index, per_plane.values)
 ax.set_xlabel("Z plane")
 ax.set_ylabel("Object count")
 ax.set_title("Objects per plane")
-results.save_figure(fig, "objects_per_plane.png", step="03_qc", show=False)
+results.save_figure(fig, "objects_per_plane.png", step="03_qc")
 
 results.write_manifest()
-print(f"\nDone: {len(combined)} objects across {n_z}Z × {n_t}T → {results.run_dir}")
+print(f"\nDone: {len(combined)} objects across {n_z}Z x {n_t}T -> {results.run_dir}")
 ```
 
 **Why BioIO + dask for large data:**

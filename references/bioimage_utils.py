@@ -466,9 +466,9 @@ def detect_measurement_pitfalls(labels, image, pixel_size_um=None,
     # 4. Background subtraction reminder
     pitfalls.append({
         "pitfall": "background_subtraction",
-        "detected": True,  # always flag as reminder
-        "severity": "warning",
-        "message": ("Reminder: verify whether background subtraction is needed. "
+        "detected": False,  # reminder, not a programmatic detection
+        "severity": "reminder",
+        "message": ("Verify whether background subtraction is needed. "
                     "If background is spatially heterogeneous, use local background "
                     "subtraction with an annular region around each object."),
         "fix": ("Measure intensity in a dilated annular region around each object "
@@ -479,8 +479,8 @@ def detect_measurement_pitfalls(labels, image, pixel_size_um=None,
     if is_timelapse:
         pitfalls.append({
             "pitfall": "photobleaching",
-            "detected": True,  # always flag for timelapse
-            "severity": "warning",
+            "detected": False,  # reminder, not a programmatic detection
+            "severity": "reminder",
             "message": ("Timelapse: intensity drops over time due to "
                         "photobleaching. Raw intensity trends are unreliable."),
             "fix": ("Normalize per-frame by dividing by median background "
@@ -505,6 +505,48 @@ def detect_measurement_pitfalls(labels, image, pixel_size_um=None,
             })
 
     return pitfalls
+
+
+def extract_measurements(labels, image, pixel_size_um=None,
+                         properties=("label", "area", "eccentricity",
+                                     "solidity", "mean_intensity",
+                                     "max_intensity")):
+    """Extract object measurements as a DataFrame.
+
+    Parameters
+    ----------
+    labels : ndarray
+        Integer label image
+    image : ndarray
+        Intensity image (same spatial shape as labels)
+    pixel_size_um : float or None
+        Pixel size in micrometers. If provided, adds calibrated area column.
+    properties : tuple of str
+        Properties to extract via regionprops_table.
+
+    Returns
+    -------
+    pandas.DataFrame with requested properties plus calibrated columns
+    """
+    import pandas as pd
+    from skimage.measure import regionprops_table
+
+    props = pd.DataFrame(regionprops_table(
+        labels, intensity_image=image, properties=properties,
+    ))
+
+    if pixel_size_um is not None and "area" in props.columns:
+        props["area_um2"] = props["area"] * (pixel_size_um ** 2)
+
+    if "mean_intensity" in props.columns:
+        props = props.rename(columns={"mean_intensity": "mean_intensity_au"})
+    if "max_intensity" in props.columns:
+        props = props.rename(columns={"max_intensity": "max_intensity_au"})
+    if "mean_intensity_au" in props.columns and "area" in props.columns:
+        props["integrated_intensity_au"] = (
+            props["mean_intensity_au"] * props["area"])
+
+    return props
 
 
 def estimate_memory(shape, dtype="uint16", n_arrays=3):
@@ -648,15 +690,18 @@ class ResultsManager:
         self.log(f"Saved {path.relative_to(self.run_dir)}")
 
     def save_figure(self, fig, filename, step="output", description="",
-                    show=True, dpi=150):
-        """Save a matplotlib figure as PNG in the step subfolder."""
+                    dpi=150):
+        """Save a matplotlib figure as PNG in the step subfolder.
+
+        Always closes the figure after saving to prevent memory leaks
+        during batch processing.
+        """
+        import matplotlib.pyplot as plt
         step_dir = self.run_dir / step
         step_dir.mkdir(exist_ok=True)
         path = step_dir / filename
         fig.savefig(str(path), dpi=dpi, bbox_inches="tight")
-        if not show:
-            import matplotlib.pyplot as plt
-            plt.close(fig)
+        plt.close(fig)
         self._files.append({"path": str(path.relative_to(self.run_dir)),
                             "step": step, "description": description})
 

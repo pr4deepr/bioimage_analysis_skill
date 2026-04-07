@@ -27,7 +27,7 @@ Reference table (the function encodes this logic):
 | Image type | Objects | Recommended approach |
 |---|---|---|
 | Fluorescence, nuclei, not touching | Round, well-separated | StarDist `2D_versatile_fluo` |
-| Fluorescence, nuclei, touching | Round, clustered | Cellpose `nuclei` or threshold + watershed |
+| Fluorescence, nuclei, touching | Round, clustered | StarDist `2D_versatile_fluo`, fallback Cellpose `nuclei` |
 | Fluorescence, whole cells | Irregular shapes | Cellpose `cyto3` (3.x) or `cyto2` (2.x) |
 | Brightfield / phase contrast | Cells | Cellpose `livecell` |
 | H&E histology | Nuclei | StarDist `2D_versatile_he` |

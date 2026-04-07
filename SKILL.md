@@ -38,13 +38,28 @@ Four rules:
 ## Workflow
 
 ### 1. Assess
-Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. No background scanner needed. For multi-channel images, identify which channel to segment (e.g., DAPI/Hoechst for nuclei, membrane marker for cells) — this is a common source of errors. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach. Call `estimate_memory()` for large files — if data doesn't fit in RAM, follow the large data guidance in `segmentation.md` and use the tiled/chunked pipelines.
+Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. For multi-channel images, identify which channel to segment (e.g., DAPI/Hoechst for nuclei, membrane marker for cells) — this is a common source of errors. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach. For large files, call `estimate_memory()` — if data doesn't fit in RAM, follow the large data guidance in `segmentation.md` and use the tiled/chunked pipelines in `cookbook-pipeline.md`.
 
 ### 2. Propose (CRITICAL — do not skip)
-Present the analysis plan to the user and **wait for explicit approval** before executing. Use the propose-approve template (see below in this file or prior commits). Only proceed after the user approves or modifies the plan.
+Present the analysis plan to the user and **wait for explicit approval** before executing. Only proceed after the user approves or modifies the plan.
+
+**Propose-approve template:**
+
+> Based on your [image description], here's what I'll do:
+>
+> 1. **Segment** [objects] using [tool + model] (parameters: [key params])
+> 2. **Post-process**: remove border objects, filter fragments < [threshold] of median area
+> 3. **Measure**: [list of measurements] calibrated at [pixel size] um/pixel
+> 4. **Export**: labels TIFF, measurements CSV, QC overlay, organized in `analysis/` folder
+>
+> Expected output: ~[N] [objects] with area, eccentricity, and intensity measurements.
+>
+> Should I proceed, or would you like to adjust anything?
+
+Wait for explicit approval. If the user says "looks good" / "go ahead" / "yes" — proceed. If they suggest changes, update the plan and re-propose.
 
 ### 3. Execute
-Run pipeline step by step. Use `clean_labels()` from `bioimage_utils.py` for post-processing. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for approaches and version-specific code. For large data (large 2D, 3D volumes, timelapses), call `estimate_memory()` first — if it doesn't fit in RAM, follow the large data guidance in `references/segmentation.md` and use the tiled/chunked pipelines in `references/cookbook-pipeline.md`.
+Run pipeline step by step. Use `clean_labels()` from `bioimage_utils.py` for post-processing. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for version-specific code and `references/cookbook-pipeline.md` for complete pipeline examples.
 
 ### 4. Iterate
 Adjust and re-run based on feedback. If not working after 2-3 tries: try a different tool, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning. Don't over-tune — if parameters need drastic per-image adjustment, the approach is wrong.
@@ -63,7 +78,7 @@ Call `detect_measurement_pitfalls()` from `bioimage_utils.py` before extracting 
 
 ## Reference Files
 
-- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `estimate_memory()`, `ResultsManager`
+- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `extract_measurements()`, `estimate_memory()`, `ResultsManager`
 - `references/environment.md` — version gotchas, GPU detection, napari-mcp setup
 - `references/segmentation.md` — approaches, decision tree, version-specific DL code, post-processing, large data guidance
 - `references/measurements.md` — what to measure, biological meaning, pitfalls
