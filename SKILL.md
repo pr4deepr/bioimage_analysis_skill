@@ -38,7 +38,7 @@ Four rules:
 ## Workflow
 
 ### 1. Assess
-Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. No background scanner needed. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach.
+Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. No background scanner needed. For multi-channel images, identify which channel to segment (e.g., DAPI/Hoechst for nuclei, membrane marker for cells) — this is a common source of errors. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach. Call `estimate_memory()` for large files — if data doesn't fit in RAM, follow the large data guidance in `segmentation.md` and use the tiled/chunked pipelines.
 
 ### 2. Propose (CRITICAL — do not skip)
 Present the analysis plan to the user and **wait for explicit approval** before executing. Use the propose-approve template (see below in this file or prior commits). Only proceed after the user approves or modifies the plan.
@@ -63,7 +63,7 @@ Call `detect_measurement_pitfalls()` from `bioimage_utils.py` before extracting 
 
 ## Reference Files
 
-- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `estimate_memory()`
+- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `estimate_memory()`, `ResultsManager`
 - `references/environment.md` — version gotchas, GPU detection, napari-mcp setup
 - `references/segmentation.md` — approaches, decision tree, version-specific DL code, post-processing, large data guidance
 - `references/measurements.md` — what to measure, biological meaning, pitfalls

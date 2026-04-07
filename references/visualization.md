@@ -66,6 +66,6 @@ Don't stall. Tell user what failed, proceed with matplotlib for all visuals.
 
 Claude knows matplotlib well. No cookbook needed. Key patterns for bioimage analysis:
 
-- **Segmentation overlay**: `ax.imshow(raw, cmap='gray')` then `ax.imshow(np.ma.masked_where(labels==0, labels), cmap='tab20', alpha=0.4)`
+- **Segmentation overlay**: `ax.imshow(raw, cmap='gray')` then `ax.imshow(np.ma.masked_where(labels==0, labels), cmap='nipy_spectral', alpha=0.4)`
 - **QC overlay with measurement coloring**: build float image where each object = its measurement value, overlay with colorbar
 - **Save at publication quality**: `plt.savefig("fig.png", dpi=300, bbox_inches="tight")`

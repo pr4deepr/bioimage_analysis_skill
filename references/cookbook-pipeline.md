@@ -18,8 +18,7 @@ from skimage.measure import regionprops_table, regionprops
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
-# (paste clean_labels from bioimage_utils.py, or import if saved as module)
-# (paste ResultsManager from quality-control.md or saved module)
+from bioimage_utils import clean_labels, ResultsManager
 
 # ── Initialize ──
 results = ResultsManager("analysis", "stardist_nuclei")
@@ -55,7 +54,7 @@ results.save_image(labels, "labels.tif", step="02_segmentation",
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.imshow(image, cmap="gray")
 labels_masked = np.ma.masked_where(labels == 0, labels)
-ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
+ax.imshow(labels_masked, cmap="nipy_spectral", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} nuclei")
 results.save_figure(fig, "overlay.png", step="02_segmentation",
                     description="Segmentation overlay on raw image")
@@ -106,8 +105,7 @@ import tifffile
 from skimage.measure import regionprops_table, regionprops
 from cellpose import models
 
-# (paste clean_labels from bioimage_utils.py)
-# (paste ResultsManager)
+from bioimage_utils import clean_labels, ResultsManager
 
 results = ResultsManager("analysis", "cellpose_cells")
 
@@ -138,7 +136,7 @@ results.save_image(labels, "labels.tif", step="02_segmentation",
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.imshow(image, cmap="gray")
 labels_masked = np.ma.masked_where(labels == 0, labels)
-ax.imshow(labels_masked, cmap="tab20", alpha=0.4, interpolation="none")
+ax.imshow(labels_masked, cmap="nipy_spectral", alpha=0.4, interpolation="none")
 ax.set_title(f"Segmentation: {labels.max()} cells")
 results.save_figure(fig, "overlay.png", step="02_segmentation")
 
@@ -177,8 +175,7 @@ from skimage.measure import regionprops_table, regionprops
 from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 
-# (paste clean_labels from bioimage_utils.py)
-# (paste ResultsManager)
+from bioimage_utils import clean_labels, ResultsManager
 
 input_dir = Path("images/")
 pixel_size_um = 0.325
@@ -256,9 +253,7 @@ import matplotlib.pyplot as plt
 from skimage.measure import regionprops_table, regionprops
 from bioio import BioImage
 
-# (paste clean_labels from bioimage_utils.py)
-# (paste estimate_memory from bioimage_utils.py)
-# (paste ResultsManager)
+from bioimage_utils import clean_labels, estimate_memory, ResultsManager
 
 image_path = "slide.czi"  # works with CZI, LIF, ND2, OME-TIFF, TIFF, etc.
 
@@ -281,6 +276,8 @@ print(f"Fits in RAM: {mem['fits_in_ram']}")
 # Slice the dask array — only the crop is loaded into RAM
 crop_size = 1024
 cy, cx = full_shape[0] // 2, full_shape[1] // 2
+# C=0 selects channel 0 — adjust to match your segmentation target
+# (e.g., C=0 for DAPI/nuclei, C=1 for membrane, etc.)
 crop = img.get_image_dask_data("YX", T=0, C=0, Z=0)
 crop = crop[cy:cy+crop_size, cx:cx+crop_size].compute()  # only 1024x1024 loaded
 
@@ -388,9 +385,7 @@ import matplotlib.pyplot as plt
 from skimage.measure import regionprops_table, regionprops
 from bioio import BioImage
 
-# (paste clean_labels from bioimage_utils.py)
-# (paste estimate_memory from bioimage_utils.py)
-# (paste ResultsManager)
+from bioimage_utils import clean_labels, estimate_memory, ResultsManager
 
 image_path = "stack.czi"  # or .nd2, .lif, .ome.tif, .tif, etc.
 
@@ -410,6 +405,7 @@ print(f"Full volume: {mem['size_gb']:.2f} GB | Fits in RAM: {mem['fits_in_ram']}
 
 # ── 2. CROP-FIRST: tune on one representative plane ──
 mid_z = n_z // 2
+# C=0 selects channel 0 — change to the channel you want to segment
 test_plane = img.get_image_dask_data("YX", T=0, C=0, Z=mid_z).compute()
 
 from cellpose import models

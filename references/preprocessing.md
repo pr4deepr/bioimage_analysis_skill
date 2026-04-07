@@ -16,17 +16,17 @@ Not all steps are needed — pick what applies based on data and modality.
 ## Pitfalls
 
 - **Cellpose channel ordering**: channel 1 = segmentation target, channel 2 = nuclear auxiliary. Mis-ordering produces bad results silently.
-- **DL models normalize internally**: feeding pre-normalized 8-bit data to Cellpose/StarDist can hurt performance. Check the tool's documentation.
+- **Cellpose normalizes internally** and is robust to raw uint16 — do not pre-normalize to 8-bit. **StarDist requires explicit normalization** via `csbdeep.utils.normalize(image, pmin=1, pmax=99.8)` before prediction — without it, StarDist may return empty results.
 - **Segmenting the wrong channel**: surprisingly common — always verify which channel you're passing to segmentation.
 
 ## Recommended Order
 
 When multiple steps are needed:
 
-1. Illumination correction (flat-field)
-2. Background subtraction
-3. Noise reduction
-4. Intensity normalization
-5. Channel extraction
+1. Channel extraction (select the channel to segment — DAPI for nuclei, membrane marker for cells, etc.)
+2. Illumination correction (flat-field)
+3. Background subtraction
+4. Noise reduction
+5. Intensity normalization
 
-Illumination correction before background subtraction because uneven illumination biases the background estimate. Noise reduction before normalization because extreme noise values distort the normalization range.
+Channel extraction first because all subsequent steps should operate on the channel you're actually segmenting. Illumination correction before background subtraction because uneven illumination biases the background estimate. Noise reduction before normalization because extreme noise values distort the normalization range.

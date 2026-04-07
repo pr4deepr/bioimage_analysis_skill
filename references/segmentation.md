@@ -43,7 +43,35 @@ Reference table (the function encodes this logic):
 
 **Adaptive thresholding**: `skimage.filters.threshold_local(image, block_size=51)`. Use when illumination is uneven.
 
-**Watershed for touching objects**: threshold → `ndi.distance_transform_edt` → `peak_local_max(distance, min_distance=10)` → `watershed(-distance, markers, mask=binary)`. Set `min_distance` to ~half the smallest expected object diameter.
+**Watershed for touching objects**:
+
+```python
+from skimage.filters import threshold_otsu
+from skimage.measure import label
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+from scipy import ndimage as ndi
+import numpy as np
+
+# 1. Threshold
+thresh = threshold_otsu(image)
+binary = image > thresh
+
+# 2. Distance transform — each pixel = distance to nearest background
+distance = ndi.distance_transform_edt(binary)
+
+# 3. Find seeds (local maxima = cell centers in distance map)
+# min_distance: ~half the smallest expected object diameter
+coords = peak_local_max(distance, min_distance=10, labels=binary)
+seed_mask = np.zeros(distance.shape, dtype=bool)
+seed_mask[tuple(coords.T)] = True
+markers = label(seed_mask)
+
+# 4. Watershed — floods from seeds, -distance so it floods valleys first
+labels = watershed(-distance, markers, mask=binary)
+```
+
+Set `min_distance` to ~half the smallest expected object diameter. If over-segmenting, increase it.
 
 ---
 
@@ -76,6 +104,25 @@ masks, flows, styles, diams = model.eval(
     image, diameter=None, channels=[0, 0],
     flow_threshold=0.4, cellprob_threshold=0.0,
 )
+```
+
+### Cellpose >= 4.0
+
+**Breaking changes from 3.x**: `models.Cellpose` is removed. `diameter` and
+`channels` are ignored (Cellpose-SAM is size- and channel-order invariant).
+Weights are bfloat16 by default (~50% smaller, ~40% faster).
+
+```python
+from cellpose import models
+
+model = models.CellposeModel(model_type="cyto3", gpu=True)
+# No diameter or channels needed — Cellpose 4 handles this automatically
+# flow_threshold and cellprob_threshold still work
+masks, flows, styles = model.eval(
+    image,
+    flow_threshold=0.4, cellprob_threshold=0.0,
+)
+# Note: styles is a zero vector in 4.x (kept for API compat)
 ```
 
 ### Custom Cellpose model

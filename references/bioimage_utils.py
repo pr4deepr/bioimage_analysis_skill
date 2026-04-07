@@ -2,7 +2,8 @@
 Bioimage analysis utility functions.
 
 Callable decision logic for segmentation tool selection, version validation,
-label post-processing, measurement pitfall detection, and memory estimation.
+label post-processing, measurement pitfall detection, memory estimation, and
+results management.
 
 Usage: the LLM calls these functions during the analysis workflow to get
 structured recommendations instead of interpreting prose decision trees.
@@ -12,6 +13,10 @@ Design:
 - Returns dicts/tuples with structured data the LLM can act on
 - No printing — the LLM formats output for the user
 """
+
+_VALID_OBJECT_TYPES = {"nuclei", "whole_cells", "other", "simple_binary"}
+_VALID_MODALITIES = {"fluorescence", "brightfield", "phase_contrast", "histology_he"}
+_VALID_SHAPES = {"round", "irregular", "unusual"}
 
 
 def pick_segmentation_tool(object_type, modality="fluorescence",
@@ -44,6 +49,16 @@ def pick_segmentation_tool(object_type, modality="fluorescence",
 
     object_type = object_type.lower().replace(" ", "_").replace("-", "_")
     modality = modality.lower().replace(" ", "_").replace("-", "_")
+
+    # Validate inputs — return clear error instead of silent fallback
+    if object_type not in _VALID_OBJECT_TYPES:
+        return {"tool": None, "model": None, "fallback_tool": None,
+                "fallback_model": None, "params": {},
+                "notes": (f"Unknown object_type '{object_type}'. "
+                          f"Valid types: {sorted(_VALID_OBJECT_TYPES)}. "
+                          "Use 'nuclei' for nuclear stains, 'whole_cells' for "
+                          "cytoplasm/membrane, 'simple_binary' for high-contrast "
+                          "objects, 'other' for anything else.")}
 
     # --- Nuclei ---
     if object_type == "nuclei":
@@ -85,6 +100,16 @@ def pick_segmentation_tool(object_type, modality="fluorescence",
             result["notes"] = ("Brightfield/phase cells: livecell model trained "
                                "on diverse cell lines. Set diameter=None for auto. "
                                "Fall back to cyto3 if livecell fails.")
+        elif not objects_touching:
+            result["tool"] = "threshold"
+            result["model"] = None
+            result["fallback_tool"] = "cellpose"
+            result["fallback_model"] = "cyto3"
+            result["params"] = {"method": "otsu"}
+            result["notes"] = ("Non-touching fluorescent cells: try Otsu threshold "
+                               "+ connected components first (faster, more "
+                               "reproducible). Fall back to Cellpose cyto3 if "
+                               "thresholding fails to separate objects.")
         else:
             result["tool"] = "cellpose"
             result["model"] = "cyto3"
@@ -145,15 +170,6 @@ def pick_segmentation_tool(object_type, modality="fluorescence",
             result["notes"] = ("High contrast, non-touching: Otsu threshold + "
                                "connected components. Simplest approach.")
 
-    else:
-        result["tool"] = "cellpose"
-        result["model"] = "cyto3"
-        result["fallback_tool"] = "stardist"
-        result["fallback_model"] = "2D_versatile_fluo"
-        result["params"] = {"diameter": None}
-        result["notes"] = (f"Unrecognized object_type '{object_type}'. "
-                           "Defaulting to Cellpose cyto3 as general-purpose.")
-
     return result
 
 
@@ -194,11 +210,14 @@ def validate_model_for_version(tool_name, model_name):
                     "suggestion": "cyto2"}
 
         if major is not None and major >= 4:
-            return {"valid": True,
-                    "message": (f"Cellpose {cellpose_version} (4.x) has a new "
-                                "architecture. Old model names may not work. "
-                                "Check Cellpose docs for current model names."),
-                    "suggestion": None}
+            return {"valid": False,
+                    "message": (f"Cellpose {cellpose_version} — breaking changes. "
+                                "models.Cellpose is removed (use models.CellposeModel). "
+                                "diameter is ignored (Cellpose-SAM is size-invariant). "
+                                "channels parameter is removed. "
+                                "See segmentation.md 'Cellpose >= 4.0' section."),
+                    "suggestion": ("Use models.CellposeModel(model_type='cyto3', gpu=True) "
+                                   "and model.eval(image). No diameter or channels needed.")}
 
     # --- nnUNet v1 vs v2 ---
     elif tool in ("nnunet", "nnunetv2"):
@@ -303,7 +322,7 @@ def clean_labels(labels, remove_border=True, min_area_fraction=0.3,
     from skimage.measure import regionprops, label as relabel
     import numpy as np
 
-    n_before = len(set(labels.ravel()) - {0})
+    n_before = int(np.sum(np.unique(labels) != 0))
     n_border_removed = 0
     n_small_removed = 0
 
@@ -574,3 +593,129 @@ def _get_available_ram_gb():
     except Exception:
         pass
     return None
+
+
+class ResultsManager:
+    """Organize analysis outputs into a structured directory with manifest.
+
+    Creates a timestamped run directory under base_dir with step subfolders.
+    Tracks all saved files, parameters, and log messages. Writes a markdown
+    manifest summarizing the run.
+
+    Usage:
+        results = ResultsManager("analysis", "stardist_nuclei")
+        results.set_params(model="StarDist", pixel_size_um=0.325)
+        results.log("Segmented 150 objects")
+        results.save_image(labels, "labels.tif", step="02_segmentation")
+        results.save_figure(fig, "overlay.png", step="02_segmentation")
+        results.save_csv(df, "measurements.csv", step="04_measurements")
+        results.write_manifest()
+    """
+
+    def __init__(self, base_dir, run_name):
+        from pathlib import Path
+        from datetime import datetime
+
+        self._base = Path(base_dir)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_dir = self._base / f"{timestamp}_{run_name}"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+
+        self._params = {}
+        self._log_lines = []
+        self._files = []  # list of {"path", "step", "description"}
+        self._provenance = self._capture_provenance()
+
+    def set_params(self, **kwargs):
+        """Record analysis parameters (model name, thresholds, etc.)."""
+        self._params.update(kwargs)
+
+    def log(self, message):
+        """Add a timestamped log message."""
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        self._log_lines.append(f"[{ts}] {message}")
+
+    def save_image(self, image, filename, step="output", description=""):
+        """Save a numpy array as TIFF in the step subfolder."""
+        import tifffile
+        step_dir = self.run_dir / step
+        step_dir.mkdir(exist_ok=True)
+        path = step_dir / filename
+        tifffile.imwrite(str(path), image)
+        self._files.append({"path": str(path.relative_to(self.run_dir)),
+                            "step": step, "description": description})
+        self.log(f"Saved {path.relative_to(self.run_dir)}")
+
+    def save_figure(self, fig, filename, step="output", description="",
+                    show=True, dpi=150):
+        """Save a matplotlib figure as PNG in the step subfolder."""
+        step_dir = self.run_dir / step
+        step_dir.mkdir(exist_ok=True)
+        path = step_dir / filename
+        fig.savefig(str(path), dpi=dpi, bbox_inches="tight")
+        if not show:
+            import matplotlib.pyplot as plt
+            plt.close(fig)
+        self._files.append({"path": str(path.relative_to(self.run_dir)),
+                            "step": step, "description": description})
+
+    def save_csv(self, df, filename, step="output", description=""):
+        """Save a pandas DataFrame as CSV in the step subfolder."""
+        step_dir = self.run_dir / step
+        step_dir.mkdir(exist_ok=True)
+        path = step_dir / filename
+        df.to_csv(str(path), index=False)
+        self._files.append({"path": str(path.relative_to(self.run_dir)),
+                            "step": step, "description": description})
+        self.log(f"Saved {path.relative_to(self.run_dir)} ({len(df)} rows)")
+
+    def write_manifest(self):
+        """Write a markdown manifest summarizing the run."""
+        lines = [f"# Analysis Run: {self.run_dir.name}\n"]
+
+        # Provenance
+        lines.append("## Environment\n")
+        for pkg, ver in sorted(self._provenance.items()):
+            lines.append(f"- {pkg}: {ver}")
+        lines.append("")
+
+        # Parameters
+        if self._params:
+            lines.append("## Parameters\n")
+            for k, v in self._params.items():
+                lines.append(f"- **{k}**: {v}")
+            lines.append("")
+
+        # Files
+        if self._files:
+            lines.append("## Output Files\n")
+            lines.append("| File | Step | Description |")
+            lines.append("|---|---|---|")
+            for f in self._files:
+                lines.append(f"| {f['path']} | {f['step']} | {f['description']} |")
+            lines.append("")
+
+        # Log
+        if self._log_lines:
+            lines.append("## Log\n")
+            lines.append("```")
+            for line in self._log_lines:
+                lines.append(line)
+            lines.append("```")
+
+        manifest_path = self.run_dir / "manifest.md"
+        manifest_path.write_text("\n".join(lines))
+        self.log(f"Manifest: {manifest_path}")
+
+    @staticmethod
+    def _capture_provenance():
+        """Capture installed versions of key bioimage analysis packages."""
+        packages = ["cellpose", "stardist", "scikit-image", "numpy",
+                     "pandas", "tifffile", "bioio", "napari", "nnunetv2"]
+        versions = {}
+        for pkg in packages:
+            v = _get_version(pkg)
+            if v:
+                versions[pkg] = v
+        return versions
