@@ -173,16 +173,29 @@ mem = estimate_memory((50000, 50000), dtype="uint16")
 ```
 
 **Always: tune on a crop first.** Never run full-dataset segmentation without
-testing parameters on a small region. Read a crop directly from disk:
+testing parameters on a small region. Use BioIO's dask backend to read a crop
+without loading the full image:
 
 ```python
+from bioio import BioImage
+
+img = BioImage("slide.czi")  # works with CZI, LIF, ND2, OME-TIFF, TIFF
+print(f"Shape: {img.dims}")  # Dimensions [T: 1, C: 3, Z: 1, Y: 40000, X: 50000]
+print(f"Pixel size: {img.physical_pixel_sizes}")  # auto from metadata
+
+# Lazy dask array — nothing loaded yet
+lazy = img.get_image_dask_data("YX", T=0, C=0, Z=0)
+# Only the crop is loaded into RAM
+crop = lazy[1000:1512, 1000:1512].compute()
+# Tune parameters on crop, then proceed to full processing
+```
+
+If BioIO is not installed, fall back to tifffile:
+```python
 import tifffile
-# Read metadata without loading pixels
 with tifffile.TiffFile("slide.tif") as tif:
     shape = (tif.pages[0].imagelength, tif.pages[0].imagewidth)
-# Read just a crop
 crop = tifffile.imread("slide.tif", key=0)[1000:1512, 1000:1512]
-# Tune parameters on crop, then proceed to full processing
 ```
 
 ### When to use each strategy
@@ -195,20 +208,27 @@ crop = tifffile.imread("slide.tif", key=0)[1000:1512, 1000:1512]
 | Timelapse (100s of timepoints) | Per-timepoint processing | Pipeline 5 variant |
 | Hundreds of standard-size images | Batch processing | Pipeline 3 in cookbook-pipeline.md |
 
-### Dask for lazy loading
+### BioIO + dask for lazy loading
 
-For zarr or large TIFF stacks, use dask arrays to avoid loading everything at once:
+BioIO returns dask arrays natively — the best approach for most microscopy formats:
 
 ```python
-import dask.array as da
-import zarr
+from bioio import BioImage
 
-z = zarr.open("data.zarr", mode="r")
-volume = da.from_zarr(z)  # lazy — nothing loaded yet
-plane = volume[42].compute()  # loads one plane on demand
+img = BioImage("data.czi")          # CZI, LIF, ND2, OME-TIFF, TIFF
+lazy = img.dask_data                 # lazy 5D (TCZYX) dask array
+plane = img.get_image_dask_data("YX", T=0, C=0, Z=5).compute()  # one plane → numpy
 ```
 
-Dask arrays also enable parallel processing of tiles/planes using `dask.delayed`.
+BioIO handles format-specific details (chunking, metadata, dimension ordering)
+and provides pixel sizes from metadata via `img.physical_pixel_sizes`.
+
+For raw zarr without BioIO:
+```python
+import dask.array as da, zarr
+volume = da.from_zarr(zarr.open("data.zarr", "r"))  # lazy
+plane = volume[42].compute()
+```
 
 ### Key considerations
 

@@ -244,8 +244,8 @@ print(f"\nDone: {len(combined)} objects from {len(image_files)} images → {resu
 ## Pipeline 4: Large 2D Image — Tiled Processing
 
 For whole-slide histology, OPAL multiplex, CometAssay mosaics, or any image too
-large to load into RAM at once. Uses tifffile to read tiles without loading the
-full image.
+large to load into RAM at once. Uses BioIO's dask backend for lazy loading —
+only the requested tile is read from disk.
 
 **Workflow: crop → tune → full run.**
 
@@ -253,68 +253,69 @@ full image.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import tifffile
-from pathlib import Path
 from skimage.measure import regionprops_table, regionprops
+from bioio import BioImage
 
 # (paste clean_labels from bioimage_utils.py)
 # (paste estimate_memory from bioimage_utils.py)
 # (paste ResultsManager)
 
-image_path = "slide.tif"
+image_path = "slide.czi"  # works with CZI, LIF, ND2, OME-TIFF, TIFF, etc.
 
-# ── 1. CHECK SIZE (read metadata only, no pixel loading) ──
-with tifffile.TiffFile(image_path) as tif:
-    page = tif.pages[0]
-    full_shape = (page.imagelength, page.imagewidth)
-    dtype = page.dtype
-    n_channels = page.samplesperpixel
-    print(f"Image: {full_shape[1]}×{full_shape[0]}, {dtype}, {n_channels}ch")
+# ── 1. CHECK SIZE (lazy — no pixels loaded) ──
+img = BioImage(image_path)
+print(f"Dims: {img.dims}")             # e.g. Dimensions [T: 1, C: 3, Z: 1, Y: 40000, X: 50000]
+print(f"Shape: {img.shape}")           # (1, 3, 1, 40000, 50000)
+print(f"Dtype: {img.dtype}")
+print(f"Pixel size: {img.physical_pixel_sizes}")  # PhysicalPixelSizes(Z=None, Y=0.325, X=0.325)
 
-mem = estimate_memory(full_shape + (n_channels,) if n_channels > 1 else full_shape,
-                      dtype=str(dtype))
-print(f"Single array: {mem['size_gb']:.2f} GB, peak: {mem['peak_gb']:.2f} GB")
+# Dask array — lazy, nothing loaded yet
+lazy_data = img.dask_data  # shape: (T, C, Z, Y, X)
+full_shape = (img.dims.Y, img.dims.X)
+
+mem = estimate_memory(full_shape, dtype=str(img.dtype))
+print(f"Single plane: {mem['size_gb']:.2f} GB, peak: {mem['peak_gb']:.2f} GB")
 print(f"Fits in RAM: {mem['fits_in_ram']}")
-if mem['warning']:
-    print(f"⚠ {mem['warning']}")
 
 # ── 2. EXTRACT CROP FOR PARAMETER TUNING ──
-# Read a small region without loading the full image
+# Slice the dask array — only the crop is loaded into RAM
 crop_size = 1024
 cy, cx = full_shape[0] // 2, full_shape[1] // 2
-crop = tifffile.imread(image_path,
-                       key=0,  # first page/plane
-                       )[cy:cy+crop_size, cx:cx+crop_size]
+crop = img.get_image_dask_data("YX", T=0, C=0, Z=0)
+crop = crop[cy:cy+crop_size, cx:cx+crop_size].compute()  # only 1024x1024 loaded
 
 # Tune segmentation parameters on the crop
 from cellpose import models
 model = models.Cellpose(model_type="cyto3", gpu=True)
 
-# Try different diameters on the crop
 for diameter in [30, 50, 80]:
     test_labels, _, _, _ = model.eval(crop, diameter=diameter, channels=[0, 0])
     print(f"  diameter={diameter}: {test_labels.max()} objects")
 
-# Pick the best diameter based on results
 best_diameter = 50  # ← set after reviewing crop results
 
 # ── 3. TILED PROCESSING ──
 tile_size = 2048
 overlap = 256  # overlap should be > largest expected object diameter
 results = ResultsManager("analysis", "tiled_large_image")
+pixel_size_um = img.physical_pixel_sizes.Y or 1.0
 results.set_params(image=image_path, tile_size=tile_size, overlap=overlap,
-                   diameter=best_diameter, full_shape=str(full_shape))
+                   diameter=best_diameter, full_shape=str(full_shape),
+                   pixel_size_um=pixel_size_um)
+
+# Get the 2D dask array for the channel we want
+lazy_plane = img.get_image_dask_data("YX", T=0, C=0, Z=0)
 
 all_measurements = []
-full_labels = np.zeros(full_shape, dtype=np.int32)
 label_offset = 0
 
 for y in range(0, full_shape[0], tile_size - overlap):
     for x in range(0, full_shape[1], tile_size - overlap):
-        # Read one tile (tifffile reads from disk, not RAM)
         y_end = min(y + tile_size, full_shape[0])
         x_end = min(x + tile_size, full_shape[1])
-        tile = tifffile.imread(image_path, key=0)[y:y_end, x:x_end]
+
+        # Only this tile is loaded from disk
+        tile = lazy_plane[y:y_end, x:x_end].compute()
 
         # Segment the tile
         tile_labels, _, _, _ = model.eval(
@@ -333,14 +334,13 @@ for y in range(0, full_shape[0], tile_size - overlap):
             if cy_r < inner_y or cx_r < inner_x:
                 tile_labels[tile_labels == region.label] = 0
 
-        # Place in full label image with offset
-        mask = tile_labels > 0
-        tile_labels[mask] += label_offset
-        full_labels[y:y_end, x:x_end][mask] = tile_labels[mask]
-        label_offset = full_labels.max()
-
-        # Measure this tile
+        # Measure this tile (no need to hold full label image in RAM)
         if tile_labels.max() > 0:
+            tile_labels_offset = tile_labels.copy()
+            mask = tile_labels_offset > 0
+            tile_labels_offset[mask] += label_offset
+            label_offset = tile_labels_offset.max()
+
             props = pd.DataFrame(regionprops_table(
                 tile_labels, intensity_image=tile,
                 properties=("label", "area", "centroid",
@@ -349,6 +349,7 @@ for y in range(0, full_shape[0], tile_size - overlap):
             # Adjust centroid to full-image coordinates
             props["centroid-0"] += y
             props["centroid-1"] += x
+            props["area_um2"] = props["area"] * (pixel_size_um ** 2)
             all_measurements.append(props)
 
         results.log(f"Tile ({y},{x}): {stats['n_after']} objects")
@@ -363,60 +364,57 @@ print(f"\nDone: {len(combined)} objects → {results.run_dir}")
 ```
 
 **Notes:**
-- For pyramidal TIFFs (e.g., from slide scanners), use `openslide` for efficient
-  tile reading: `slide.read_region((x, y), level=0, (tile_size, tile_size))`
-- For OME-ZARR, use `zarr.open(path)[y:y_end, x:x_end]` for lazy chunk access
+- **BioIO reads CZI, LIF, ND2, OME-TIFF, TIFF** — no need to handle each format
+  differently. Install the right plugin: `pip install bioio-czi`, `bioio-lif`, etc.
+- **Pixel size comes from metadata** — `img.physical_pixel_sizes` reads it
+  automatically, no manual calibration needed for supported formats
+- For pyramidal TIFFs (slide scanners), `openslide` may be faster for tile access
 - Tile overlap should be larger than the biggest expected object diameter
 - The centroid-in-inner-region strategy handles stitching without duplicate objects
-- For dask-based lazy loading: `dask_image.imread(path)` gives a dask array that
-  reads tiles on demand — useful when combined with `dask.delayed` for parallel tile processing
+- **Fallback** if BioIO is not installed: use `tifffile.imread(path, key=0)[y:y_end, x:x_end]`
 
 ---
 
 ## Pipeline 5: 3D Volume / Timelapse — Chunked Processing
 
 For z-stacks, light-sheet volumes, or timelapses too large to load at once.
-Processes one plane or timepoint at a time.
+Uses BioIO's dask backend to load one plane/timepoint at a time without
+holding the full volume in RAM.
 
 ```python
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import tifffile
-from pathlib import Path
 from skimage.measure import regionprops_table, regionprops
+from bioio import BioImage
 
 # (paste clean_labels from bioimage_utils.py)
 # (paste estimate_memory from bioimage_utils.py)
 # (paste ResultsManager)
 
-image_path = "stack.tif"
+image_path = "stack.czi"  # or .nd2, .lif, .ome.tif, .tif, etc.
 
-# ── 1. CHECK SIZE ──
-with tifffile.TiffFile(image_path) as tif:
-    # For multi-page TIFFs, each page is one plane/timepoint
-    n_pages = len(tif.pages)
-    page = tif.pages[0]
-    plane_shape = (page.imagelength, page.imagewidth)
-    dtype = page.dtype
-    print(f"Stack: {n_pages} planes, each {plane_shape[1]}×{plane_shape[0]}, {dtype}")
+# ── 1. CHECK SIZE (lazy — no pixels loaded) ──
+img = BioImage(image_path)
+print(f"Dims: {img.dims}")             # e.g. Dimensions [T: 1, C: 2, Z: 50, Y: 2048, X: 2048]
+print(f"Shape: {img.shape}")
+print(f"Pixel size: {img.physical_pixel_sizes}")
 
-full_shape = (n_pages,) + plane_shape
-mem = estimate_memory(full_shape, dtype=str(dtype))
+n_z = img.dims.Z
+n_t = img.dims.T
+plane_shape = (img.dims.Y, img.dims.X)
+full_shape = (n_z,) + plane_shape
+
+mem = estimate_memory(full_shape, dtype=str(img.dtype))
 print(f"Full volume: {mem['size_gb']:.2f} GB | Fits in RAM: {mem['fits_in_ram']}")
 
 # ── 2. CROP-FIRST: tune on one representative plane ──
-# Pick middle plane for tuning (or use max-intensity projection of a few planes)
-mid_idx = n_pages // 2
-test_plane = tifffile.imread(image_path, key=mid_idx)
-
-# Optional: if single plane is also large, crop it
-# test_crop = test_plane[500:1500, 500:1500]
+mid_z = n_z // 2
+test_plane = img.get_image_dask_data("YX", T=0, C=0, Z=mid_z).compute()
 
 from cellpose import models
 model = models.Cellpose(model_type="cyto3", gpu=True)
 
-# Tune on test plane
 for diameter in [20, 40, 60]:
     test_labels, _, _, _ = model.eval(test_plane, diameter=diameter, channels=[0, 0])
     print(f"  diameter={diameter}: {test_labels.max()} objects")
@@ -424,39 +422,43 @@ for diameter in [20, 40, 60]:
 best_diameter = 40  # ← set after reviewing
 
 # ── 3. PROCESS PLANE-BY-PLANE ──
+pixel_size_um = img.physical_pixel_sizes.Y or 1.0
 results = ResultsManager("analysis", "3d_planewise")
-results.set_params(image=image_path, n_planes=n_pages, plane_shape=str(plane_shape),
-                   diameter=best_diameter)
+results.set_params(image=image_path, n_z=n_z, n_t=n_t,
+                   plane_shape=str(plane_shape), diameter=best_diameter)
 
 all_measurements = []
 
-for z in range(n_pages):
-    # Read one plane at a time — never holds full volume in RAM
-    plane = tifffile.imread(image_path, key=z)
+for t in range(n_t):
+    for z in range(n_z):
+        # Load one plane at a time — only this plane is in RAM
+        plane = img.get_image_dask_data("YX", T=t, C=0, Z=z).compute()
 
-    # Segment
-    labels, _, _, _ = model.eval(plane, diameter=best_diameter, channels=[0, 0])
+        # Segment
+        labels, _, _, _ = model.eval(plane, diameter=best_diameter, channels=[0, 0])
 
-    # Post-process
-    labels, stats = clean_labels(labels, remove_border=True, min_area_fraction=0.3)
+        # Post-process
+        labels, stats = clean_labels(labels, remove_border=True, min_area_fraction=0.3)
 
-    # Measure
-    if labels.max() > 0:
-        props = pd.DataFrame(regionprops_table(
-            labels, intensity_image=plane,
-            properties=("label", "area", "eccentricity",
-                        "mean_intensity"),
-        ))
-        props["z_plane"] = z
-        all_measurements.append(props)
+        # Measure
+        if labels.max() > 0:
+            props = pd.DataFrame(regionprops_table(
+                labels, intensity_image=plane,
+                properties=("label", "area", "eccentricity",
+                            "mean_intensity"),
+            ))
+            props["z_plane"] = z
+            props["timepoint"] = t
+            props["area_um2"] = props["area"] * (pixel_size_um ** 2)
+            all_measurements.append(props)
 
-    if z % 10 == 0:
-        results.log(f"Plane {z}/{n_pages}: {stats['n_after']} objects")
+        if z % 10 == 0:
+            results.log(f"T={t}, Z={z}/{n_z}: {stats['n_after']} objects")
 
 # ── 4. EXPORT ──
 combined = pd.concat(all_measurements, ignore_index=True)
 results.save_csv(combined, "all_measurements.csv", step="04_measurements",
-                 description=f"{len(combined)} objects across {n_pages} planes")
+                 description=f"{len(combined)} objects across {n_z} planes, {n_t} timepoints")
 
 # Summary: objects per plane
 fig, ax = plt.subplots(figsize=(8, 4))
@@ -468,30 +470,28 @@ ax.set_title("Objects per plane")
 results.save_figure(fig, "objects_per_plane.png", step="03_qc", show=False)
 
 results.write_manifest()
-print(f"\nDone: {len(combined)} objects across {n_pages} planes → {results.run_dir}")
+print(f"\nDone: {len(combined)} objects across {n_z}Z × {n_t}T → {results.run_dir}")
 ```
 
-**3D segmentation alternatives (when 3D context matters):**
+**Why BioIO + dask for large data:**
+- `img.dask_data` returns a lazy 5D (TCZYX) dask array — nothing is loaded until
+  `.compute()` is called. Only the requested slice hits RAM.
+- `img.get_image_dask_data("YX", T=0, C=0, Z=5)` extracts exactly one plane as
+  a 2D dask array. Call `.compute()` to materialize it as numpy.
+- Works with CZI, LIF, ND2, OME-TIFF — BioIO handles the format details.
+- Pixel sizes come from metadata: `img.physical_pixel_sizes.Y` — no manual calibration.
+- **Fallback** if BioIO is not installed: use `tifffile.imread(path, key=z)` for
+  multi-page TIFFs, or `zarr.open(path)[z]` for zarr-backed data.
+
+**3D segmentation (when z-context matters):**
 - **Cellpose 3D**: `model.eval(volume, do_3D=True, diameter=40)` — segments the
-  full volume using 3D flow fields. Requires loading the full volume into RAM.
-  For large volumes, use dask: `volume = dask.array.from_zarr("stack.zarr")`
-  and process in overlapping sub-volumes.
+  full volume using 3D flow fields. Requires the volume to fit in RAM.
+  For large volumes, process overlapping sub-volumes and stitch.
 - **PlantSeg**: purpose-built for 3D cell segmentation in plant tissue and
   cleared samples. Uses 3D U-Net + graph partitioning.
 - **2D-per-slice vs true 3D**: 2D-per-slice (this pipeline) is faster and uses
-  less RAM, but loses z-continuity — objects aren't tracked across planes.
-  True 3D gives connected objects but needs the full volume (or large chunks) in memory.
+  less RAM, but loses z-continuity. True 3D gives connected objects but needs
+  the full volume (or large overlapping chunks) in memory.
 
-**Timelapse variant:** Replace `z_plane` with `timepoint`. For tracking objects
-across timepoints, use `btrack` or `trackpy` after per-frame segmentation.
-
-**Dask for lazy loading:** For zarr-backed data, use dask arrays to avoid loading
-the full volume. Each slice access reads only that chunk from disk:
-```python
-import dask.array as da
-import zarr
-
-z = zarr.open("stack.zarr", mode="r")
-volume = da.from_zarr(z)  # lazy — nothing loaded yet
-plane = volume[z_idx].compute()  # loads one plane
-```
+**Timelapse tracking:** After per-frame segmentation, use `btrack` or `trackpy`
+to link objects across timepoints.
