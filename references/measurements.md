@@ -39,25 +39,34 @@ Useful for phenotypic profiling and classification. Difficult to interpret biolo
 
 ## Measurement Pitfalls
 
-Flag these proactively — users rarely catch them on their own.
+**Use `detect_measurement_pitfalls()` from `bioimage_utils.py`** before extracting
+measurements. It programmatically checks for edge objects, saturation, missing
+calibration, and merged objects:
+
+```python
+from bioimage_utils import detect_measurement_pitfalls
+pitfalls = detect_measurement_pitfalls(labels, image, pixel_size_um=0.325)
+for p in pitfalls:
+    if p["detected"]:
+        print(f"[{p['severity']}] {p['pitfall']}: {p['message']}")
+        print(f"  Fix: {p['fix']}")
+```
+
+The function checks:
+- **Edge objects** — objects touching the border have truncated area/shape
+- **Saturation** — pixels at detector max underestimate intensity
+- **Missing calibration** — area in pixels is meaningless for comparison
+- **Background subtraction** — reminder to check for spatial heterogeneity
+- **Photobleaching** (timelapse only) — intensity drops over time
+- **Merged objects** — largest object >>10x median area suggests under-segmentation
+
+Additional context for interpreting these pitfalls:
 
 **Segmentation errors propagate into measurements.**
-A merged pair has ~2× area, distorted eccentricity, averaged intensity. Always overlay masks on 5-10 representative images per condition before trusting bulk measurements.
+A merged pair has ~2x area, distorted eccentricity, averaged intensity. Always overlay masks on 5-10 representative images per condition before trusting bulk measurements.
 
 **Background subtraction matters more than you think.**
 If background is spatially heterogeneous (tissue sections, uneven illumination), use local background subtraction — measure intensity in a dilated annular region around each object with `skimage.segmentation.expand_labels`, then subtract.
-
-**Edge objects have truncated measurements.**
-Cells touching the image border are partially cropped — area, perimeter, and shape are wrong. Filter with `skimage.segmentation.clear_border` or check if mask pixels touch row 0/col 0/max.
-
-**Photobleaching in timelapse.**
-Intensity drops over time. Normalize per-frame (divide by median background intensity) or you'll see a false downward trend.
-
-**Pixel size calibration.**
-Always confirm µm/pixel from metadata before reporting. Area in pixels is meaningless for cross-experiment comparison. If metadata missing, measure a known structure.
-
-**Saturation / clipping.**
-If brightest signal hits detector ceiling (255 in 8-bit, 4095 in 12-bit), intensity is underestimated. Check histograms — spike at max value = saturation.
 
 ---
 

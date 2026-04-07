@@ -46,7 +46,19 @@ If no GPU: warn user that DL segmentation will be slow on large datasets. Cellpo
 
 ## Version Gotchas
 
-Check before recommending any specific model or API.
+**Use `validate_model_for_version()` from `bioimage_utils.py`** to catch
+incompatibilities before writing code:
+
+```python
+from bioimage_utils import validate_model_for_version
+check = validate_model_for_version("cellpose", "cyto3")
+# {"valid": False, "message": "Cellpose 2.x does not have cyto3...", "suggestion": "cyto2"}
+```
+
+The function checks Cellpose version vs model names, nnUNet v1 vs v2,
+aicsimageio vs bioio rename, and StarDist availability.
+
+Reference table (the function encodes this logic):
 
 | Tool | Gotcha |
 |---|---|

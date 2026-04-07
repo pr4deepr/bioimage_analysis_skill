@@ -38,13 +38,13 @@ Four rules:
 ## Workflow
 
 ### 1. Assess
-Read the image, scan directory for context (custom models, configs, other images). Find tools — use STATE.md cache if available, else spawn background scanner. Find viewer and write ANALYSIS.md with the plan. Reference `references/cookbook-io.md` for reading patterns.
+Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. No background scanner needed. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach.
 
-### 2. Connect Viewer
-Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
+### 2. Propose (CRITICAL — do not skip)
+Present the analysis plan to the user and **wait for explicit approval** before executing. Use the propose-approve template (see below in this file or prior commits). Only proceed after the user approves or modifies the plan.
 
 ### 3. Execute
-Run pipeline step by step. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for approaches and version-specific code.
+Run pipeline step by step. Use `clean_labels()` from `bioimage_utils.py` for post-processing. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for approaches and version-specific code. For large data (large 2D, 3D volumes, timelapses), call `estimate_memory()` first — if it doesn't fit in RAM, follow the large data guidance in `references/segmentation.md` and use the tiled/chunked pipelines in `references/cookbook-pipeline.md`.
 
 ### 4. Iterate
 Adjust and re-run based on feedback. If not working after 2-3 tries: try a different tool, try interactive annotation, custom training (last resort). Start simple: thresholding before DL, pretrained before custom, defaults before tuning. Don't over-tune — if parameters need drastic per-image adjustment, the approach is wrong.
@@ -52,7 +52,7 @@ Adjust and re-run based on feedback. If not working after 2-3 tries: try a diffe
 **When stuck, search [forum.image.sc](https://forum.image.sc).** This is the primary community forum for bioimage analysis — actively monitored by developers of Cellpose, StarDist, napari, QuPath, CellProfiler, and other tools. Search for similar modalities, error messages, or workflows. Suggest users post there for expert advice on genuinely difficult problems.
 
 ### 5. Measure & Export
-Save organized outputs (labels, QC overlays, CSV tables). Reference `references/measurements.md` for extraction patterns and pitfalls. Connect back to biology — answering the biological question is the endpoint, not raw measurements. Reference `references/quality-control.md` for validation. Check versions before recommending features — see `references/environment.md`.
+Call `detect_measurement_pitfalls()` from `bioimage_utils.py` before extracting measurements — it checks for edge objects, saturation, missing calibration, and other issues. Save organized outputs (labels, QC overlays, CSV tables). Reference `references/measurements.md` for extraction patterns and pitfalls. Connect back to biology — answering the biological question is the endpoint, not raw measurements. Reference `references/quality-control.md` for validation.
 
 ## Slash Commands
 
@@ -63,9 +63,11 @@ Save organized outputs (labels, QC overlays, CSV tables). Reference `references/
 
 ## Reference Files
 
+- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `estimate_memory()`
 - `references/environment.md` — version gotchas, GPU detection, napari-mcp setup
-- `references/segmentation.md` — approaches, decision tree, version-specific DL code, post-processing
+- `references/segmentation.md` — approaches, decision tree, version-specific DL code, post-processing, large data guidance
 - `references/measurements.md` — what to measure, biological meaning, pitfalls
 - `references/preprocessing.md` — when and how to preprocess, recommended order
 - `references/quality-control.md` — validation checklist and diagnostic table
 - `references/visualization.md` — napari-mcp setup and connection
+- `references/cookbook-pipeline.md` — end-to-end pipelines: single image, batch, tiled large 2D, 3D/timelapse
