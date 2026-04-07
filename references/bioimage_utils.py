@@ -222,6 +222,10 @@ def validate_model_for_version(tool_name, model_name):
     elif tool in ("bioio", "aicsimageio"):
         bioio = _get_version("bioio")
         aics = _get_version("aicsimageio")
+        if not bioio and not aics:
+            return {"valid": False,
+                    "message": "Neither bioio nor aicsimageio is installed.",
+                    "suggestion": "Install bioio (the current package)."}
         if tool == "aicsimageio" and bioio and not aics:
             return {"valid": False,
                     "message": ("aicsimageio has been renamed to bioio. "
@@ -232,6 +236,15 @@ def validate_model_for_version(tool_name, model_name):
                     "message": (f"aicsimageio {aics} is installed (the old name). "
                                 "bioio is the current package."),
                     "suggestion": "Use 'import aicsimageio' or install bioio."}
+        if tool == "bioio" and bioio:
+            return {"valid": True,
+                    "message": f"bioio {bioio} installed.",
+                    "suggestion": None}
+        if tool == "aicsimageio" and aics:
+            return {"valid": True,
+                    "message": (f"aicsimageio {aics} installed. Note: bioio is the "
+                                "current name. aicsimageio still works."),
+                    "suggestion": None}
 
     # --- StarDist (stable across versions) ---
     elif tool == "stardist":
@@ -290,14 +303,15 @@ def clean_labels(labels, remove_border=True, min_area_fraction=0.3,
     from skimage.measure import regionprops, label as relabel
     import numpy as np
 
-    n_before = labels.max()
+    n_before = len(set(labels.ravel()) - {0})
     n_border_removed = 0
     n_small_removed = 0
 
     # Remove border objects
     if remove_border:
         labels_clean = clear_border(labels)
-        n_border_removed = n_before - len(np.unique(labels_clean)) + 1  # +1 for bg
+        n_after_border = len(set(labels_clean.ravel()) - {0})
+        n_border_removed = n_before - n_after_border
         labels = labels_clean
 
     labels = relabel(labels > 0, connectivity=1)
@@ -312,19 +326,32 @@ def clean_labels(labels, remove_border=True, min_area_fraction=0.3,
             else:
                 min_area = int(np.median(areas) * min_area_fraction)
 
+            # Vectorized removal: build a lookup table instead of
+            # scanning the full array once per small object
+            max_label = int(labels.max())
+            keep = np.ones(max_label + 1, dtype=bool)
+            keep[0] = False  # background stays 0
             for region in regions:
                 if region.area < min_area:
-                    labels[labels == region.label] = 0
+                    keep[region.label] = False
                     n_small_removed += 1
+
+            if n_small_removed > 0:
+                # Zero out all removed labels in one pass
+                lut = np.zeros(max_label + 1, dtype=labels.dtype)
+                for i in range(1, max_label + 1):
+                    if keep[i]:
+                        lut[i] = i
+                labels = lut[labels]
 
             labels = relabel(labels > 0, connectivity=1)
 
-    n_after = labels.max()
+    n_after = int(labels.max())
     stats = {
-        "n_before": n_before,
+        "n_before": int(n_before),
         "n_after": n_after,
-        "n_border_removed": n_border_removed,
-        "n_small_removed": n_small_removed,
+        "n_border_removed": int(n_border_removed),
+        "n_small_removed": int(n_small_removed),
     }
     return labels, stats
 
@@ -380,14 +407,10 @@ def detect_measurement_pitfalls(labels, image, pixel_size_um=None,
     })
 
     # 2. Saturation / clipping
-    if image.dtype == np.uint8:
-        max_val = 255
-    elif image.dtype == np.uint16:
-        max_val = 65535
-    elif image.dtype == np.uint12 or str(image.dtype).startswith("uint"):
+    if np.issubdtype(image.dtype, np.integer):
         max_val = np.iinfo(image.dtype).max
     else:
-        max_val = None
+        max_val = None  # skip saturation check for float images
 
     if max_val is not None:
         n_saturated = np.sum(image >= max_val)
