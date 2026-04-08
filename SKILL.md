@@ -6,9 +6,11 @@ description: >
   (Cellpose, StarDist, nnUNetv2) approaches. Use this skill when users mention:
   cell segmentation, nucleus detection, object measurement, scikit-image,
   Cellpose, StarDist, napari, FIJI, image quantification, morphological
-  measurements, intensity measurements, fluorescence analysis, or any task
-  involving identifying and measuring objects in microscopy images. Even if the
-  user just says "I have microscopy images and need to analyze them", use this skill.
+  measurements, intensity measurements, fluorescence analysis, calcium imaging,
+  voltage imaging, functional imaging, timelapse response, F/F0, dF/F, GCaMP,
+  calcium indicator, drug response, stimulus response, or any task involving
+  identifying and measuring objects in microscopy images. Even if the user just
+  says "I have microscopy images and need to analyze them", use this skill.
 commands:
   - name: bio
     description: Start bioimage analysis workflow
@@ -72,13 +74,15 @@ SKILL.md (entrypoint — defines workflow, references all files below)
 ├── bioimage_utils.py — callable logic (hub, used by most files)
 │   pick_segmentation_tool, validate_model_for_version, clean_labels,
 │   detect_measurement_pitfalls, extract_measurements, estimate_memory,
-│   ResultsManager
+│   compute_activity_map, classify_responses, ResultsManager
 ├── segmentation.md — approaches, version-specific code, large data
 │   → uses bioimage_utils.py, references cookbook-pipeline.md
+├── timeseries-functional.md — functional timelapse (calcium, voltage, pH, FRET)
+│   → uses bioimage_utils.py, references segmentation.md
 ├── cookbook-pipeline.md — 5 end-to-end pipelines
 │   → uses bioimage_utils.py, references segmentation.md
-├── measurements.md — what to measure, pitfalls
-│   → uses bioimage_utils.py
+├── measurements.md — what to measure, pitfalls, temporal measurements
+│   → uses bioimage_utils.py, references timeseries-functional.md
 ├── environment.md — version gotchas, GPU, napari-mcp
 │   → uses bioimage_utils.py
 ├── preprocessing.md — when and how to preprocess (self-contained)

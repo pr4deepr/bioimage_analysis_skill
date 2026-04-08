@@ -2,7 +2,8 @@
 Bioimage analysis utility functions.
 
 Callable decision logic for segmentation tool selection, version validation,
-label post-processing, measurement pitfall detection, memory estimation, and
+label post-processing, measurement pitfall detection, memory estimation,
+functional timelapse analysis (activity maps, response classification), and
 results management.
 
 Usage: the LLM calls these functions during the analysis workflow to get
@@ -15,7 +16,8 @@ Design:
 """
 
 _VALID_OBJECT_TYPES = {"nuclei", "whole_cells", "other", "simple_binary"}
-_VALID_MODALITIES = {"fluorescence", "brightfield", "phase_contrast", "histology_he"}
+_VALID_MODALITIES = {"fluorescence", "brightfield", "phase_contrast", "histology_he",
+                     "functional_timelapse", "calcium_imaging"}
 _VALID_SHAPES = {"round", "irregular", "unusual"}
 
 
@@ -28,7 +30,8 @@ def pick_segmentation_tool(object_type, modality="fluorescence",
     object_type : str
         "nuclei", "whole_cells", "other", or "simple_binary"
     modality : str
-        "fluorescence", "brightfield", "phase_contrast", "histology_he"
+        "fluorescence", "brightfield", "phase_contrast", "histology_he",
+        "functional_timelapse", "calcium_imaging"
     objects_touching : bool
         Whether objects are touching/overlapping
     shape : str
@@ -49,6 +52,27 @@ def pick_segmentation_tool(object_type, modality="fluorescence",
 
     object_type = object_type.lower().replace(" ", "_").replace("-", "_")
     modality = modality.lower().replace(" ", "_").replace("-", "_")
+
+    # Normalize calcium_imaging alias
+    if modality == "calcium_imaging":
+        modality = "functional_timelapse"
+
+    # --- Functional timelapse (calcium, voltage, pH, FRET, etc.) ---
+    # This is a different workflow: segment on a projection or activity map,
+    # then extract traces. Return guidance, not a single tool.
+    if modality == "functional_timelapse":
+        result["tool"] = "cellpose"
+        result["model"] = "cyto3"
+        result["fallback_tool"] = "activity_map"
+        result["fallback_model"] = None
+        result["params"] = {"method": "max_or_mean_time_projection"}
+        result["notes"] = (
+            "Functional timelapse: try Cellpose/StarDist on max/mean time "
+            "projection first. If cells are only visible through activity, "
+            "use compute_activity_map() + percentile threshold instead. "
+            "If frames shift, register first. See "
+            "references/timeseries-functional.md.")
+        return result
 
     # Validate inputs — return clear error instead of silent fallback
     if object_type not in _VALID_OBJECT_TYPES:
@@ -637,22 +661,123 @@ def _get_available_ram_gb():
     return None
 
 
-class ResultsManager:
-    """Organize analysis outputs into a structured directory with manifest.
+def compute_activity_map(stack, baseline_frames=None):
+    """Brightness-independent activity map from a timelapse stack.
 
-    Creates a timestamped run directory under base_dir with step subfolders.
-    Tracks all saved files, parameters, and log messages. Writes a markdown
-    manifest summarizing the run.
+    For functional imaging where cells are dim and only visible through
+    temporal activity. A dim cell with 20% change scores the same as a
+    bright cell with 20% change.
 
-    Usage:
-        results = ResultsManager("analysis", "stardist_nuclei")
-        results.set_params(model="StarDist", pixel_size_um=0.325)
-        results.log("Segmented 150 objects")
-        results.save_image(labels, "labels.tif", step="02_segmentation")
-        results.save_figure(fig, "overlay.png", step="02_segmentation")
-        results.save_csv(df, "measurements.csv", step="04_measurements")
-        results.write_manifest()
+    Formula per pixel: std(F/F0) * (max(F/F0) - 1).
+
+    Parameters
+    ----------
+    stack : ndarray (T, Y, X)
+        Numpy array. Caller handles loading (use dask for large data).
+    baseline_frames : slice or None
+        Frames for F0. None = first 10% of frames.
+
+    Returns
+    -------
+    dict: activity_map (Y,X float64), f0 (Y,X baseline mean), warning (str)
     """
+    import numpy as np
+
+    if stack.ndim != 3:
+        raise ValueError(f"Expected 3D stack (T, Y, X), got shape {stack.shape}")
+
+    warning = ""
+    mem = estimate_memory(stack.shape, dtype=str(stack.dtype))
+    if mem["fits_in_ram"] is False:
+        warning = (f"Stack is {mem['size_gb']:.1f} GB — needs ~3x in RAM. "
+                   "Consider temporal downsampling or frame-by-frame F/F0.")
+
+    n_frames = stack.shape[0]
+    if baseline_frames is None:
+        baseline_frames = slice(0, max(1, n_frames // 10))
+
+    f0 = np.mean(stack[baseline_frames].astype(np.float64), axis=0)
+    f0_safe = np.where(f0 > 0, f0, np.nan)
+    ff0 = stack.astype(np.float64) / f0_safe[np.newaxis, :, :]
+
+    # std(F/F0) * (max(F/F0) - 1): high only for pixels with real peaks
+    activity_map = np.nanstd(ff0, axis=0) * (np.nanmax(ff0, axis=0) - 1.0)
+    activity_map = np.nan_to_num(activity_map, nan=0.0, posinf=0.0, neginf=0.0)
+    activity_map = np.clip(activity_map, 0, None)
+
+    return {
+        "activity_map": activity_map,
+        "f0": np.nan_to_num(f0, nan=0.0),
+        "warning": warning,
+    }
+
+
+def classify_responses(traces, baseline_frames, n_std=3, min_fold_change=1.05,
+                       smoothing_window=None):
+    """Classify ROIs as responding based on F/F0 traces.
+
+    Responding = post-baseline peak exceeds BOTH baseline_mean + n_std*std
+    AND min_fold_change. Returns z-scores so user can adjust after the fact.
+
+    Defaults calibrated for calcium. Voltage: min_fold_change=1.01.
+    pH/FRET: 1.02-1.05.
+
+    Parameters
+    ----------
+    traces : ndarray (n_rois, n_frames) — F/F0 traces per ROI
+    baseline_frames : slice — baseline period (e.g., slice(0, 683))
+    n_std : float — SDs above baseline mean. Default 3 (permissive).
+    min_fold_change : float — absolute minimum F/F0 peak. Default 1.05.
+    smoothing_window : int or None — Savitzky-Golay window (must be odd).
+        Calcium: 11-31. Voltage: 3-7. None = no smoothing.
+
+    Returns
+    -------
+    dict: responding (bool array), peak_ff0, z_scores, baseline_means,
+        baseline_stds, thresholds (all per-ROI), n_responding, fraction_responding
+    """
+    import numpy as np
+
+    if traces.ndim != 2:
+        raise ValueError(f"Expected 2D traces (n_rois, n_frames), got shape {traces.shape}")
+
+    baseline = traces[:, baseline_frames]
+    post_start = baseline_frames.stop if baseline_frames.stop else traces.shape[1]
+    post = traces[:, post_start:]
+    if post.shape[1] == 0:
+        raise ValueError("No post-baseline frames. Check baseline_frames slice.")
+
+    if smoothing_window is not None:
+        from scipy.signal import savgol_filter
+        polyorder = min(3, smoothing_window - 1)
+        post = savgol_filter(post, window_length=smoothing_window,
+                             polyorder=polyorder, axis=1)
+
+    baseline_means = np.mean(baseline, axis=1)
+    baseline_stds = np.std(baseline, axis=1)
+    peak_ff0 = np.max(post, axis=1)
+    thresholds = np.maximum(baseline_means + n_std * baseline_stds,
+                            min_fold_change)
+    responding = peak_ff0 > thresholds
+    safe_stds = np.where(baseline_stds > 0, baseline_stds, np.inf)
+    z_scores = (peak_ff0 - baseline_means) / safe_stds
+    n_responding = int(np.sum(responding))
+    n_rois = traces.shape[0]
+
+    return {
+        "responding": responding,
+        "peak_ff0": peak_ff0,
+        "z_scores": z_scores,
+        "baseline_means": baseline_means,
+        "baseline_stds": baseline_stds,
+        "thresholds": thresholds,
+        "n_responding": n_responding,
+        "fraction_responding": n_responding / n_rois if n_rois > 0 else 0.0,
+    }
+
+
+class ResultsManager:
+    """Organize analysis outputs into timestamped run directory with manifest."""
 
     def __init__(self, base_dir, run_name):
         from pathlib import Path
@@ -669,17 +794,15 @@ class ResultsManager:
         self._provenance = self._capture_provenance()
 
     def set_params(self, **kwargs):
-        """Record analysis parameters (model name, thresholds, etc.)."""
         self._params.update(kwargs)
 
     def log(self, message):
-        """Add a timestamped log message."""
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         self._log_lines.append(f"[{ts}] {message}")
 
     def save_image(self, image, filename, step="output", description=""):
-        """Save a numpy array as TIFF in the step subfolder."""
+        """Save numpy array as TIFF."""
         import tifffile
         step_dir = self.run_dir / step
         step_dir.mkdir(exist_ok=True)
@@ -691,11 +814,7 @@ class ResultsManager:
 
     def save_figure(self, fig, filename, step="output", description="",
                     dpi=150):
-        """Save a matplotlib figure as PNG in the step subfolder.
-
-        Always closes the figure after saving to prevent memory leaks
-        during batch processing.
-        """
+        """Save matplotlib figure as PNG. Closes fig after saving."""
         import matplotlib.pyplot as plt
         step_dir = self.run_dir / step
         step_dir.mkdir(exist_ok=True)
@@ -706,7 +825,7 @@ class ResultsManager:
                             "step": step, "description": description})
 
     def save_csv(self, df, filename, step="output", description=""):
-        """Save a pandas DataFrame as CSV in the step subfolder."""
+        """Save DataFrame as CSV."""
         step_dir = self.run_dir / step
         step_dir.mkdir(exist_ok=True)
         path = step_dir / filename
@@ -716,23 +835,18 @@ class ResultsManager:
         self.log(f"Saved {path.relative_to(self.run_dir)} ({len(df)} rows)")
 
     def write_manifest(self):
-        """Write a markdown manifest summarizing the run."""
+        """Write markdown manifest summarizing the run."""
         lines = [f"# Analysis Run: {self.run_dir.name}\n"]
 
-        # Provenance
         lines.append("## Environment\n")
         for pkg, ver in sorted(self._provenance.items()):
             lines.append(f"- {pkg}: {ver}")
         lines.append("")
-
-        # Parameters
         if self._params:
             lines.append("## Parameters\n")
             for k, v in self._params.items():
                 lines.append(f"- **{k}**: {v}")
             lines.append("")
-
-        # Files
         if self._files:
             lines.append("## Output Files\n")
             lines.append("| File | Step | Description |")
@@ -740,8 +854,6 @@ class ResultsManager:
             for f in self._files:
                 lines.append(f"| {f['path']} | {f['step']} | {f['description']} |")
             lines.append("")
-
-        # Log
         if self._log_lines:
             lines.append("## Log\n")
             lines.append("```")
@@ -755,9 +867,8 @@ class ResultsManager:
 
     @staticmethod
     def _capture_provenance():
-        """Capture installed versions of key bioimage analysis packages."""
         packages = ["cellpose", "stardist", "scikit-image", "numpy",
-                     "pandas", "tifffile", "bioio", "napari", "nnunetv2"]
+                    "pandas", "tifffile", "bioio", "napari", "nnunetv2"]
         versions = {}
         for pkg in packages:
             v = _get_version(pkg)

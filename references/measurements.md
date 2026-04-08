@@ -70,6 +70,16 @@ If background is spatially heterogeneous (tissue sections, uneven illumination),
 
 ---
 
+## Temporal / Functional Measurements
+
+For functional timelapse (calcium, voltage, pH, FRET), measurements come from
+**per-ROI traces over time**, not single-frame regionprops: peak F/F0, time to
+peak, response duration, rise/decay time, event frequency, area under curve.
+Use `classify_responses()` from `bioimage_utils.py` for peak F/F0 and z-scores.
+Parameter guidance by indicator type in `timeseries-functional.md`.
+
+---
+
 ## Choosing What to Measure
 
 Use the biological question to drive measurement selection. Resist "measure everything" — focus on features that directly address the question.

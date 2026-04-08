@@ -12,6 +12,8 @@ Not all steps are needed — pick what applies based on data and modality.
 | Brightness varies across dataset | Intensity normalization | Percentile clip to 1st-99th, rescale to 0-1 |
 | Multi-channel data | Channel extraction | Segment from channel that best defines boundaries (e.g., DAPI for nuclei) |
 | Tool expects different bit depth | Bit depth conversion | Rescale first, then convert (never truncate 16→8 without rescaling) |
+| Intensity decay over time in timelapse | Photobleaching correction | Exponential fit to pre-stimulus baseline, or frame-wise normalization by background region. See `timeseries-functional.md` |
+| Frame-to-frame motion in timelapse | Image registration | `skimage.registration.phase_cross_correlation` for rigid translation; suite2p or CaImAn for non-rigid. Register before segmentation or trace extraction |
 
 ## Pitfalls
 
