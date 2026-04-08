@@ -35,9 +35,7 @@ Reference table (the function encodes this logic):
 | Touching objects, clean signal | Round-ish | Threshold + distance transform + watershed |
 | Nothing works with pretrained | — | Custom training (20-50 annotations for Cellpose, 50+ for nnUNetv2) |
 | Functional timelapse (calcium, voltage, pH) | Cells visible in frames | Cellpose/StarDist on max/mean time projection |
-| Functional timelapse, dim cells | Only visible through activity | Activity map + percentile threshold + watershed |
-
-**Functional timelapse data** (calcium imaging, voltage imaging, pH reporters, etc.): segmentation approach depends on cell visibility. If cells are visible in individual frames, use Cellpose/StarDist on a max or mean time projection — standard segmentation works. If cells are dim and only visible through their temporal activity, standard approaches fail — use `compute_activity_map()` from `bioimage_utils.py` to create a brightness-independent activity image, then segment that with percentile thresholding + watershed. If there is frame-to-frame motion, register the stack first. See `timeseries-functional.md` for the full workflow.
+| Functional timelapse, dim cells | Only visible through activity | Activity map + percentile threshold + watershed. See `timeseries-functional.md` |
 
 ---
 
