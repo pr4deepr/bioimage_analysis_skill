@@ -32,11 +32,14 @@ Check before recommending DL segmentation — CPU inference on large datasets ca
 
 ```bash
 python -c "
-import torch
-print(f'CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
+try:
+    import torch
+    print(f'CUDA available: {torch.cuda.is_available()}')
+    if torch.cuda.is_available():
+        print(f'GPU: {torch.cuda.get_device_name(0)}')
+        print(f'VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
+except ImportError:
+    print('torch not installed — cannot check GPU. DL tools (Cellpose, StarDist) need PyTorch.')
 "
 ```
 
@@ -46,14 +49,26 @@ If no GPU: warn user that DL segmentation will be slow on large datasets. Cellpo
 
 ## Version Gotchas
 
-Check before recommending any specific model or API.
+**Use `validate_model_for_version()` from `bioimage_utils.py`** to catch
+incompatibilities before writing code:
+
+```python
+from bioimage_utils import validate_model_for_version
+check = validate_model_for_version("cellpose", "cyto3")
+# {"valid": False, "message": "Cellpose 2.x does not have cyto3...", "suggestion": "cyto2"}
+```
+
+The function checks Cellpose version vs model names, nnUNet v1 vs v2,
+aicsimageio vs bioio rename, and StarDist availability.
+
+Reference table (the function encodes this logic):
 
 | Tool | Gotcha |
 |---|---|
-| Cellpose 2.x | Models: `cyto`, `cyto2`, `nuclei`. No `cyto3`. |
-| Cellpose 3.x | Adds `cyto3`. Previous models still work. |
-| Cellpose 4.x | New architecture — old model names may not exist. |
-| StarDist | Pretrained models stable across versions. |
+| Cellpose 2.x | Models: `cyto`, `cyto2`, `nuclei`, `livecell`. No `cyto3`. Use `models.Cellpose(model_type=...)`. |
+| Cellpose 3.x | Adds `cyto3`. All 2.x models still work. Same API as 2.x. |
+| Cellpose 4.x | **Breaking**: `models.Cellpose` removed → use `models.CellposeModel`. `diameter` ignored (size-invariant). `channels` removed. Weights are bfloat16. See segmentation.md for 4.x code. |
+| StarDist | Pretrained models stable across versions. **Requires** explicit normalization via `csbdeep.utils.normalize()`. |
 | scikit-image | Generally stable. Minor moves between 0.19→0.22. |
 | napari | Plugin API changed between 0.4.x and 0.5.x. |
 | nnUNetv2 | Completely different from v1 — different CLI, dataset format. |
