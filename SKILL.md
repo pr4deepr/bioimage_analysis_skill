@@ -18,11 +18,12 @@ commands:
 
 # Bioimage Analysis
 
-Four rules:
+Five rules:
 1. **Look first, then propose.** Assess the image and context before running anything.
-2. **Close the feedback loop.** Every step that produces output: show it visually (napari preferred, matplotlib always available), assess it yourself, ask user to evaluate before proceeding. Never say "check the output."
-3. **Ask focused questions, propose the plan, then execute after approval.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Then present a concrete analysis plan with expected outputs and wait for the user to approve before running anything.
-4. **Show results in the best available viewer.** If napari MCP tools are available, use them. Otherwise use matplotlib. Offer napari setup once if available but not connected.
+2. **Find environments, never blind-install.** Before installing any package, check existing conda/mamba envs for it (glob `site-packages/`, not `conda list`). Only install if no env has it — and into the right env. See `references/environment.md` Steps 1-3.
+3. **Close the feedback loop.** Every step that produces output: show it visually (napari preferred, matplotlib always available), assess it yourself, ask user to evaluate before proceeding. Never say "check the output."
+4. **Ask focused questions, then execute.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Never ask technical implementation questions.
+5. **Show results in the best available viewer.** napari preferred when available (visual feedback loop is core). matplotlib is a first-class alternative with equal code quality — used whenever napari is unavailable. Offer napari setup once if available but not connected.
 
 ## User Interaction
 
@@ -40,23 +41,11 @@ Four rules:
 ### 1. Assess
 Read the image, scan directory for context (custom models, configs, other images). Check the active Python environment inline — run `which python` or `where python`, then check installed packages with a quick `python -c "import ..."`. For multi-channel images, identify which channel to segment (e.g., DAPI/Hoechst for nuclei, membrane marker for cells) — this is a common source of errors. Call `pick_segmentation_tool()` then `validate_model_for_version()` from `bioimage_utils.py` to select the approach. For large files, call `estimate_memory()` — if data doesn't fit in RAM, follow the large data guidance in `segmentation.md` and use the tiled/chunked pipelines in `cookbook-pipeline.md`.
 
-### 2. Propose (CRITICAL — do not skip)
-Present the analysis plan to the user and **wait for explicit approval** before executing. Only proceed after the user approves or modifies the plan.
+**Environment rule — look before you install:**
+Never `pip install` or `conda install` a package without first checking existing environments. Follow `references/environment.md` Steps 1-3: list conda envs, pick candidates by name, then glob `site-packages/` for the package folder. This filesystem check takes milliseconds. Only install if no existing env has the package — and install into the correct env, not whatever happens to be active. This applies to every tool (Cellpose, StarDist, napari-mcp, etc.).
 
-**Propose-approve template:**
-
-> Based on your [image description], here's what I'll do:
->
-> 1. **Segment** [objects] using [tool + model] (parameters: [key params])
-> 2. **Post-process**: remove border objects, filter fragments < [threshold] of median area
-> 3. **Measure**: [list of measurements] calibrated at [pixel size] um/pixel
-> 4. **Export**: labels TIFF, measurements CSV, QC overlay, organized in `analysis/` folder
->
-> Expected output: ~[N] [objects] with area, eccentricity, and intensity measurements.
->
-> Should I proceed, or would you like to adjust anything?
-
-Wait for explicit approval. If the user says "looks good" / "go ahead" / "yes" — proceed. If they suggest changes, update the plan and re-propose.
+### 2. Connect Viewer
+Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
 
 ### 3. Execute
 Run pipeline step by step. Use `clean_labels()` from `bioimage_utils.py` for post-processing. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for version-specific code and `references/cookbook-pipeline.md` for complete pipeline examples.
