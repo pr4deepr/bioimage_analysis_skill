@@ -78,11 +78,21 @@ Call `detect_measurement_pitfalls()` from `bioimage_utils.py` before extracting 
 
 ## Reference Files
 
-- `references/bioimage_utils.py` — callable decision logic: `pick_segmentation_tool()`, `validate_model_for_version()`, `clean_labels()`, `detect_measurement_pitfalls()`, `extract_measurements()`, `estimate_memory()`, `ResultsManager`
-- `references/environment.md` — version gotchas, GPU detection, napari-mcp setup
-- `references/segmentation.md` — approaches, decision tree, version-specific DL code, post-processing, large data guidance
-- `references/measurements.md` — what to measure, biological meaning, pitfalls
-- `references/preprocessing.md` — when and how to preprocess, recommended order
-- `references/quality-control.md` — validation checklist and diagnostic table
-- `references/visualization.md` — napari-mcp setup and connection
-- `references/cookbook-pipeline.md` — end-to-end pipelines: single image, batch, tiled large 2D, 3D/timelapse
+```
+SKILL.md (entrypoint — defines workflow, references all files below)
+├── bioimage_utils.py — callable logic (hub, used by most files)
+│   pick_segmentation_tool, validate_model_for_version, clean_labels,
+│   detect_measurement_pitfalls, extract_measurements, estimate_memory,
+│   ResultsManager
+├── segmentation.md — approaches, version-specific code, large data
+│   → uses bioimage_utils.py, references cookbook-pipeline.md
+├── cookbook-pipeline.md — 5 end-to-end pipelines
+│   → uses bioimage_utils.py, references segmentation.md
+├── measurements.md — what to measure, pitfalls
+│   → uses bioimage_utils.py
+├── environment.md — version gotchas, GPU, napari-mcp
+│   → uses bioimage_utils.py
+├── preprocessing.md — when and how to preprocess (self-contained)
+├── quality-control.md — validation checklist (self-contained)
+└── visualization.md — napari-mcp and matplotlib (self-contained)
+```
