@@ -1,16 +1,11 @@
 ---
 name: bioimage-analysis
 description: >
-  Guide users through image segmentation and measurement for biological
-  microscopy data. Covers classical (scikit-image, FIJI) and deep learning
-  (Cellpose, StarDist, nnUNetv2) approaches. Use this skill when users mention:
-  cell segmentation, nucleus detection, object measurement, scikit-image,
-  Cellpose, StarDist, napari, FIJI, image quantification, morphological
-  measurements, intensity measurements, fluorescence analysis, calcium imaging,
-  voltage imaging, functional imaging, timelapse response, F/F0, dF/F, GCaMP,
-  calcium indicator, drug response, stimulus response, or any task involving
-  identifying and measuring objects in microscopy images. Even if the user just
-  says "I have microscopy images and need to analyze them", use this skill.
+  Use when users mention: cell segmentation, nucleus detection, object
+  measurement, scikit-image, Cellpose, StarDist, napari, FIJI, image
+  quantification, fluorescence analysis, calcium imaging, voltage imaging,
+  functional imaging, F/F0, dF/F, GCaMP, drug response, microscopy images,
+  or any task involving identifying and measuring objects in biological images.
 commands:
   - name: bio
     description: Start bioimage analysis workflow
@@ -26,6 +21,18 @@ Five rules:
 3. **Close the feedback loop.** Every step that produces output: show it visually (napari preferred, matplotlib always available), assess it yourself, ask user to evaluate before proceeding. Never say "check the output."
 4. **Ask focused questions, then execute.** Up to 2-3 questions to understand the biological question and data. Infer everything else from context. Never ask technical implementation questions.
 5. **Show results in the best available viewer.** napari preferred when available (visual feedback loop is core). matplotlib is a first-class alternative with equal code quality — used whenever napari is unavailable. Offer napari setup once if available but not connected.
+
+## When to Route Elsewhere
+
+| User needs | Better tool | Why |
+|---|---|---|
+| High-throughput phenotypic screens (100s of conditions, automated pipelines) | CellProfiler | Built for batch phenotypic profiling with GUI pipeline builder |
+| Whole-slide pathology with manual annotations, tissue classification | QuPath | Purpose-built for digital pathology with annotation tools |
+| Complex 3D stitching, registration, or multi-view fusion | BigStitcher / FIJI | Specialized stitching algorithms this skill doesn't cover |
+| Neural calcium imaging with motion correction + spike inference | suite2p or CaImAn | End-to-end calcium pipelines including non-rigid registration |
+| Training custom deep learning models from scratch | nnUNetv2 CLI directly | This skill helps with pretrained models; custom training needs nnUNet's own workflow |
+
+This skill covers the common case: load images → segment → measure → export. For specialized workflows above, suggest the dedicated tool and help the user set it up if needed.
 
 ## User Interaction
 
