@@ -1,8 +1,27 @@
 # Environment
 
-## Quick Environment Check
+## Finding Existing Environments — Three Steps
 
-No background scanner needed. Run inline:
+**Step 1:** Try `conda env list` or `mamba env list`.
+
+**Step 2:** If conda CLI not on PATH, glob common locations directly:
+```bash
+# Check ALL of these — .conda/envs/ is easy to miss
+ls -d ~/.conda/envs/*/  ~/miniconda3/envs/*/  ~/miniforge3/envs/*/  \
+      ~/mambaforge/envs/*/  ~/anaconda3/envs/*/  2>/dev/null
+# Windows: check %USERPROFILE%\.conda\envs, miniconda3\envs, etc.
+```
+
+**Step 3:** Glob `site-packages/` in each candidate for the needed package:
+```bash
+ls {env_path}/lib/python*/site-packages/cellpose/  2>/dev/null
+```
+
+Only install if no existing env has the package.
+
+---
+
+## Quick Inline Check (active env)
 
 ```bash
 # Find the active Python
