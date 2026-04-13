@@ -67,10 +67,10 @@ Adjust and re-run based on feedback. If not working after 2-3 tries: try a diffe
 ### 5. Measure & Export
 Check for measurement pitfalls (edge objects, saturation, missing calibration — see `detect_measurement_pitfalls()` in `bioimage_utils.py`). Reference `references/measurements.md` for extraction patterns. Connect back to biology — answering the biological question is the endpoint, not raw measurements. Reference `references/quality-control.md` for validation.
 
-**Output organization**: Save all outputs to a single `analysis/` subfolder
-with step-prefixed filenames: `01_raw_preview.png`, `02_labels.tif`,
-`02_overlay.png`, `03_qc_histogram.png`, `04_measurements.csv`. Tell the
-user what was saved and where.
+**Output organization**: Create `analysis/` subfolder (`os.makedirs` / `mkdir -p`)
+before first save. Use step-prefixed filenames: `01_raw_preview.png`,
+`02_labels.tif`, `02_overlay.png`, `03_qc_histogram.png`, `04_measurements.csv`.
+Tell the user what was saved and where.
 
 ## Slash Commands
 

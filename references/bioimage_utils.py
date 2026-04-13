@@ -304,12 +304,15 @@ def validate_model_for_version(tool_name, model_name):
 
 
 def _get_version(package_name):
-    """Get installed version of a package. Returns None if not installed."""
+    """Get installed version. Handles version_str (Cellpose 3.x) and __version__."""
     try:
         import importlib.metadata
         return importlib.metadata.version(package_name)
     except Exception:
-        return None
+        try:  # Fallback for packages without metadata
+            mod = __import__(package_name)
+            return getattr(mod, '__version__', None) or getattr(mod, 'version_str', None)
+        except Exception: return None
 
 
 def _major_version(version_string):

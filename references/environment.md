@@ -30,18 +30,25 @@ where python  # Windows
 
 # Check what's installed (one call)
 python -c "
-import importlib, subprocess
+import importlib, importlib.util
 for pkg in ['cellpose','stardist','skimage','napari','napari_mcp','bioio','tifffile','nnunetv2']:
     spec = importlib.util.find_spec(pkg)
     if spec:
-        mod = importlib.import_module(pkg)
-        print(f'{pkg}={getattr(mod, \"__version__\", \"installed\")}')
+        try:
+            mod = importlib.import_module(pkg)
+            v = getattr(mod, '__version__', None) or getattr(mod, 'version_str', 'installed')
+            print(f'{pkg}={v}')
+        except Exception:
+            print(f'{pkg}=installed (version unknown)')
     else:
         print(f'{pkg}=not found')
 "
 ```
 
 If the active env doesn't have what's needed, ask the user which Python/env to use.
+
+**Multi-env workflows are normal**: segmentation envs often lack matplotlib
+and vice versa. Save masks/CSVs to disk, switch envs between steps.
 
 ---
 
@@ -128,17 +135,3 @@ claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp
 If napari < 0.5.0, warn: napari-mcp may not work. Suggest upgrading.
 
 If setup fails at any step: tell the user what failed, proceed with matplotlib for all visuals.
-
----
-
-## Tools Quick Reference
-
-| Tool | Purpose |
-|---|---|
-| BioIO | Read proprietary microscopy formats (CZI, LIF, ND2, OME-TIFF) |
-| scikit-image | Thresholding, morphology, watershed, regionprops |
-| Cellpose | DL instance segmentation, pretrained + custom models |
-| StarDist | DL segmentation for nuclei, very fast |
-| nnUNetv2 | Self-configuring DL segmentation, requires custom training |
-| napari | Interactive viewer, QC overlays, annotation |
-| tifffile | Fallback TIFF reader, always available |
