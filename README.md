@@ -79,7 +79,9 @@ bioimage-analysis/
     ├── preprocessing.md             # When and how to preprocess
     ├── quality-control.md           # Validation checklist
     ├── visualization.md             # napari-mcp and matplotlib patterns
-    └── cookbook-pipeline.md          # End-to-end pipelines (single, batch, tiled, 3D)
+    ├── cookbook-pipeline.md          # End-to-end pipelines (single, batch, tiled, 3D)
+    ├── spatial-transcriptomics.md   # Points2Regions int64-sparse clustering fix
+    └── spatial_clustering.py        # Chunked KMeans for large int64 sparse matrices
 ```
 
 ### `bioimage_utils.py` functions

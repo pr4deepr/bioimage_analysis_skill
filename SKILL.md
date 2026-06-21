@@ -45,7 +45,7 @@ Read the image, scan directory for context (custom models, configs, other images
 Never `pip install` or `conda install` a package without first checking existing environments. Follow `references/environment.md` Steps 1-3: list conda envs, pick candidates by name, then glob `site-packages/` for the package folder. This filesystem check takes milliseconds. Only install if no existing env has the package — and install into the correct env, not whatever happens to be active. This applies to every tool (Cellpose, StarDist, napari-mcp, etc.).
 
 ### 2. Connect Viewer
-Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/cookbook-visualization.md` for the full setup flow.
+Check STATE.md for napari status. napari-mcp must be **registered as an MCP server in Claude Code** (not just launched as a subprocess). Use `claude mcp list` to check, `claude mcp add --transport stdio napari-mcp -- {viewer_python} -m napari_mcp` to register. Verify with `ToolSearch` for napari tools. If MCP unavailable, launch napari directly with data pre-loaded as fallback. Reference `references/visualization.md` for the full setup flow.
 
 ### 3. Execute
 Run pipeline step by step. Use `clean_labels()` from `bioimage_utils.py` for post-processing. After every visual step: push to napari or show matplotlib. Present results as preliminary — "Here's a first pass, does this look right?" Reference `references/segmentation.md` for version-specific code and `references/cookbook-pipeline.md` for complete pipeline examples.
@@ -83,5 +83,13 @@ SKILL.md (entrypoint — defines workflow, references all files below)
 │   → uses bioimage_utils.py
 ├── preprocessing.md — when and how to preprocess (self-contained)
 ├── quality-control.md — validation checklist (self-contained)
-└── visualization.md — napari-mcp and matplotlib (self-contained)
+├── visualization.md — napari-mcp and matplotlib (self-contained)
+├── spatial-transcriptomics.md — Points2Regions int64-sparse clustering fix
+│   → uses spatial_clustering.py
+└── spatial_clustering.py — chunked KMeans for large int64 sparse matrices
+    make_streaming_minibatch_kmeans, chunked_fit_predict, patch_points2regions
 ```
+
+For spatial-transcriptomics / transcript-based region clustering (e.g.
+Points2Regions) that crashes with "Only sparse matrices with 32-bit integer
+indices are accepted. Got int64 indices.", see `references/spatial-transcriptomics.md`.

@@ -1,0 +1,7 @@
+# Dependencies for running the skill's test suite (tests/).
+#   python -m pip install -r requirements-dev.txt
+#   python -m pytest tests/
+numpy
+scipy
+scikit-learn
+pytest
