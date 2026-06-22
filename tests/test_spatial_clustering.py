@@ -93,6 +93,25 @@ def test_chunked_fit_predict_recovers_cluster_structure():
     assert adjusted_rand_score(y, labels) > 0.95
 
 
+def test_chunked_fit_is_one_global_clustering_not_per_chunk():
+    """The whole point of Points2Regions: a single clustering shared across the
+    entire dataset. Chunked training must recover the *same* global partition as
+    an ordinary single-shot fit — proving the centroids propagate across chunks
+    rather than each chunk being clustered independently."""
+    X, _ = _blobs(std=0.5)
+    X64 = _force_int64(X)
+
+    # reference: an ordinary global fit on the int32 matrix
+    ref = MiniBatchKMeans(n_clusters=4, n_init=3, random_state=0).fit(X)
+    chunked = sc.chunked_fit_predict(X64, n_clusters=4, chunk_size=50,
+                                     epochs=8, random_state=0)
+
+    # same partition as a single global fit (label ids may be permuted -> ARI)
+    assert adjusted_rand_score(ref.labels_, chunked) > 0.9
+    # one shared label set spanning all chunks, not 4-per-chunk fragmentation
+    assert len(np.unique(chunked)) == 4
+
+
 def test_chunked_fit_predict_does_not_mutate_input_dtype():
     X, _ = _blobs()
     X64 = _force_int64(X)
