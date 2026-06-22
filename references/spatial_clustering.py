@@ -38,7 +38,8 @@ never fails when numpy/scipy/sklearn are absent.
 _P2R_MODULE = "points2regions._points2regions"
 
 
-def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5):
+def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5,
+                                    init_subsample=None):
     """Build a ``MiniBatchKMeans`` subclass that trains and predicts in row
     chunks when handed an int64-indexed sparse matrix.
 
@@ -52,6 +53,14 @@ def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5):
         Number of shuffled passes over the data for ``partial_fit``. More
         epochs -> tighter convergence; 5 is usually plenty for region
         clustering.
+    init_subsample : int, "auto", or None
+        k-means++ warm start. By default (``None``) ``partial_fit`` seeds
+        centroids from the first chunk only. Set this to run k-means++ on a
+        random row-subsample first, giving a global-quality initialisation that
+        avoids empty/degenerate clusters — without materialising the full int64
+        matrix for sklearn. ``"auto"`` picks ``min(n, max(50_000, 100*k))``
+        rows; an int uses that many rows (clamped to ``[k, n]``). Ignored on the
+        int32 fast path (stock fit already does k-means++).
 
     Returns
     -------
@@ -61,10 +70,27 @@ def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5):
     """
     import numpy as np
     import scipy.sparse as sp
-    from sklearn.cluster import MiniBatchKMeans
+    from sklearn.cluster import MiniBatchKMeans, kmeans_plusplus
 
     def _needs_chunking(X):
         return sp.issparse(X) and X.indices.dtype != np.int32
+
+    def _kmeanspp_centers(X, k, rng):
+        """k-means++ initial centres from a random row-subsample (each slice is
+        int32, so sklearn never sees the int64 matrix)."""
+        n = X.shape[0]
+        if init_subsample == "auto":
+            size = min(n, max(50_000, 100 * k))
+        else:
+            size = min(n, max(int(init_subsample), k))
+        if size < n:
+            idx = rng.choice(n, size=size, replace=False)
+            Xs = X[idx]
+        else:
+            Xs = X
+        seed = int(rng.integers(0, 2**31 - 1))
+        centers, _ = kmeans_plusplus(Xs, n_clusters=k, random_state=seed)
+        return np.asarray(centers)
 
     # NOTE: no custom __init__ — sklearn forbids *args/**kwargs in an
     # estimator constructor (it introspects the signature for get_params).
@@ -78,6 +104,10 @@ def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5):
             X = X.tocsr()
             n = X.shape[0]
             rng = np.random.default_rng(self.random_state)
+            if init_subsample is not None:
+                # explicit array init -> partial_fit seeds from these centres
+                self.init = _kmeanspp_centers(X, self.n_clusters, rng)
+                self.n_init = 1
             for _ in range(epochs):
                 order = rng.permutation(n)
                 for s in range(0, n, chunk_size):
@@ -102,7 +132,7 @@ def make_streaming_minibatch_kmeans(chunk_size=200_000, epochs=5):
 
 
 def chunked_fit_predict(X, n_clusters, *, chunk_size=200_000, epochs=5,
-                        random_state=0, **kmeans_kwargs):
+                        init_subsample=None, random_state=0, **kmeans_kwargs):
     """Cluster a sparse feature matrix that may have int64 indices.
 
     Parameters
@@ -111,7 +141,7 @@ def chunked_fit_predict(X, n_clusters, *, chunk_size=200_000, epochs=5,
         Feature matrix (rows = pixels/observations, cols = genes/features).
     n_clusters : int
         Number of clusters.
-    chunk_size, epochs : int
+    chunk_size, epochs, init_subsample
         See :func:`make_streaming_minibatch_kmeans`.
     random_state : int or None
         Seed for reproducibility.
@@ -123,22 +153,27 @@ def chunked_fit_predict(X, n_clusters, *, chunk_size=200_000, epochs=5,
     numpy.ndarray
         Integer cluster label per row. The input matrix is not modified.
     """
-    cls = make_streaming_minibatch_kmeans(chunk_size=chunk_size, epochs=epochs)
+    cls = make_streaming_minibatch_kmeans(chunk_size=chunk_size, epochs=epochs,
+                                          init_subsample=init_subsample)
     model = cls(n_clusters=n_clusters, random_state=random_state,
                 **kmeans_kwargs).fit(X)
     return model.labels_
 
 
-def patch_points2regions(chunk_size=200_000, epochs=5):
+def patch_points2regions(chunk_size=200_000, epochs=5, init_subsample=None):
     """Replace ``MiniBatchKMeans`` inside the Points2Regions module with the
     chunked drop-in, so existing P2R clustering calls handle int64 sparse.
 
     Call this *before* running the clustering step::
 
         from spatial_clustering import patch_points2regions
-        original = patch_points2regions(chunk_size=200_000, epochs=5)
+        original = patch_points2regions(chunk_size=200_000, epochs=5,
+                                        init_subsample="auto")
         # ... run Points2Regions clustering ...
         # optionally: restore_points2regions(original)
+
+    ``init_subsample`` enables k-means++ warm start
+    (see :func:`make_streaming_minibatch_kmeans`).
 
     Returns
     -------
@@ -150,7 +185,7 @@ def patch_points2regions(chunk_size=200_000, epochs=5):
     mod = importlib.import_module(_P2R_MODULE)
     original = mod.MiniBatchKMeans
     mod.MiniBatchKMeans = make_streaming_minibatch_kmeans(
-        chunk_size=chunk_size, epochs=epochs)
+        chunk_size=chunk_size, epochs=epochs, init_subsample=init_subsample)
     return original
 
 

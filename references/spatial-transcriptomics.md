@@ -55,7 +55,8 @@ Implementation: `references/spatial_clustering.py`.
 ```python
 from spatial_clustering import patch_points2regions, restore_points2regions
 
-original = patch_points2regions(chunk_size=200_000, epochs=5)
+original = patch_points2regions(chunk_size=200_000, epochs=5,
+                                init_subsample="auto")
 # ... run your normal Points2Regions clustering call ...
 restore_points2regions(original)   # optional
 ```
@@ -77,6 +78,16 @@ labels = chunked_fit_predict(X, n_clusters=20, chunk_size=200_000, epochs=5)
   well under `2**31 / (avg non-zeros per row)`.
 - `epochs`: shuffled passes for `partial_fit`. 5 is usually plenty; raise it for
   tighter convergence.
+- `init_subsample`: k-means++ warm start. Streaming `partial_fit` otherwise
+  seeds centroids from the first chunk only, which can leave a cluster empty.
+  Set `"auto"` (or an int row count) to run k-means++ on a random row-subsample
+  first — a global-quality init that avoids degenerate clusters, still without
+  materialising the int64 matrix for sklearn. Recommended for production runs.
+
+All three (training, prediction, and this init) share **one** global centroid
+set, so cluster identity is consistent across every chunk — labels mean the same
+region everywhere, which is what Points2Regions needs before connected
+components.
 
 ## Alternative knobs (no code change)
 

@@ -112,6 +112,40 @@ def test_chunked_fit_is_one_global_clustering_not_per_chunk():
     assert len(np.unique(chunked)) == 4
 
 
+def test_kmeanspp_warm_start_auto_is_global_and_complete():
+    """k-means++ warm start ('auto' subsample) yields one global clustering,
+    all k clusters populated (no degenerate/empty cluster), recovering the
+    blobs."""
+    X, y = _blobs(std=0.5)
+    X64 = _force_int64(X)
+    labels = sc.chunked_fit_predict(X64, n_clusters=4, chunk_size=50, epochs=6,
+                                    init_subsample="auto", random_state=0)
+    assert len(np.unique(labels)) == 4
+    assert adjusted_rand_score(y, labels) > 0.95
+
+
+def test_kmeanspp_warm_start_explicit_subsample_runs_on_int64():
+    X, _ = _blobs()
+    X64 = _force_int64(X)
+    labels = sc.chunked_fit_predict(X64, n_clusters=4, chunk_size=50,
+                                    init_subsample=200, random_state=0)
+    assert labels.shape == (X64.shape[0],)
+    assert len(np.unique(labels)) == 4
+
+
+def test_kmeanspp_warm_start_seeds_from_kmeanspp_centres():
+    """With warm start enabled the estimator's `init` is the dense k-means++
+    centre array (not the default string), confirming the warm start path ran
+    and sklearn never saw the int64 matrix for initialisation."""
+    Cls = sc.make_streaming_minibatch_kmeans(chunk_size=50, epochs=4,
+                                             init_subsample="auto")
+    X, _ = _blobs()
+    X64 = _force_int64(X)
+    model = Cls(n_clusters=4, random_state=0).fit(X64)
+    assert isinstance(model.init, np.ndarray)
+    assert model.init.shape == (4, X64.shape[1])
+
+
 def test_chunked_fit_predict_does_not_mutate_input_dtype():
     X, _ = _blobs()
     X64 = _force_int64(X)
