@@ -1,0 +1,9 @@
+# Core (required to compute neighborhoods)
+numpy
+pandas
+scikit-learn
+# Plotting (enrichment heatmap + Voronoi map)
+matplotlib
+seaborn
+scipy
+shapely
