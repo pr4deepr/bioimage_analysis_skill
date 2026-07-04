@@ -248,9 +248,17 @@ To turn this feasibility review into a decision, run:
   clustering-derived, so treat accuracy as agreement-with-a-pipeline, not ground truth.
 
 **Suggested next steps:** (1) obtain `main_fcs_csv.csv` from Mendeley into the working environment;
-(2) implement the §6 protocol as a small notebook; (3) report the grouped-split leaderboard with
-calibration and runtime; (4) if TabPFN+`ManyClassClassifier` lands within a few points of tuned
-XGBoost with better calibration and acceptable latency, promote it to a recommended baseline.
+(2) run the §6 protocol — a ready harness is provided in
+[`tabpfn_phenotyping_benchmark.py`](./tabpfn_phenotyping_benchmark.py) (see
+[`README.md`](./README.md)); (3) report the grouped-split leaderboard with calibration and runtime;
+(4) if TabPFN+`ManyClassClassifier` lands within a few points of tuned XGBoost with better
+calibration and acceptable latency, promote it to a recommended baseline.
+
+> **Runtime caveat (verified while building the harness).** TabPFN pulls **gated** weights from
+> HuggingFace (`Prior-Labs/tabpfn_*`; accept terms + authenticate), so it cannot execute in a
+> restricted/offline environment — the baselines run anywhere, but the TabPFN rows require a machine
+> with HuggingFace access (GPU strongly recommended, since `ManyClassClassifier` runs many TabPFN
+> inferences per prediction).
 
 ---
 

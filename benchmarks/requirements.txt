@@ -1,0 +1,13 @@
+# Core (baselines run with just these)
+numpy
+pandas
+scikit-learn
+matplotlib
+tabulate
+
+# Gradient-boosted baseline
+xgboost
+
+# Model under evaluation (needs torch; weights are gated on HuggingFace — see README)
+tabpfn>=2
+tabpfn-extensions
