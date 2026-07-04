@@ -1,0 +1,31 @@
+# Conda/mamba environment for the TabPFN spatial-proteomics benchmark on HPC.
+#
+# Create it with:   mamba env create -f environment.yml   (or `conda env create ...`)
+# Activate with:    conda activate tabpfn-bench
+#
+# GPU is strongly recommended: ManyClassClassifier runs many TabPFN inferences
+# per prediction, so CPU on ~10^5 cells is slow.
+#
+# IMPORTANT — match PyTorch to your cluster's CUDA. The default pip `torch` wheel
+# bundles a CUDA runtime that must be compatible with the node's driver. If your
+# cluster provides CUDA via `module load` and you hit a CUDA mismatch, install a
+# specific build by uncommenting the --extra-index-url line below and setting the
+# tag (cu121, cu124, ...) to match `nvidia-smi` on a GPU node. For a CPU-only run,
+# use the cpu index (https://download.pytorch.org/whl/cpu).
+name: tabpfn-bench
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # - --extra-index-url https://download.pytorch.org/whl/cu121   # match cluster CUDA
+      - torch
+      - numpy
+      - pandas
+      - scikit-learn
+      - matplotlib
+      - tabulate
+      - xgboost
+      - tabpfn>=2
+      - tabpfn-extensions
