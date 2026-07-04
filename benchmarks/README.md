@@ -35,6 +35,19 @@ Runs the whole pipeline on a synthetic fixture that mirrors the CRC CODEX schema
 because the fixture is trivially separable — it validates the plumbing, not model
 quality.
 
+## Pre-flight check (recommended before a long/GPU run)
+
+```bash
+python tabpfn_phenotyping_benchmark.py --csv main_fcs_csv.csv --dry-run --sample-rows 5000
+```
+
+Runs **no** cross-validation. It verifies, and prints a PASS/WARN/FAIL report for:
+the installed models, torch + GPU, whether the TabPFN checkpoint loads (cached /
+reachable), and the data schema (label/group columns, marker count, class count
+vs the 10-class head, NaNs, folds ≤ groups). Exit code `0` = ready, `1` = data
+unusable, `2` = other issues. `--sample-rows N` reads only the first N rows so the
+check is fast on a huge file.
+
 ## Run on the real data
 
 The dataset is `main_fcs_csv.csv` (Schürch 2020 CRC CODEX; Mendeley

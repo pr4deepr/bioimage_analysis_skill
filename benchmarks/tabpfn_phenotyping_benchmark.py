@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import time
 import urllib.request
 import warnings
@@ -83,16 +84,16 @@ LINEAGE_MAP = {
 # --------------------------------------------------------------------------- #
 # Data loading and schema detection
 # --------------------------------------------------------------------------- #
-def load_table(csv: str) -> pd.DataFrame:
+def load_table(csv: str, nrows: int | None = None) -> pd.DataFrame:
     if csv.startswith(("http://", "https://")):
         print(f"[data] downloading {csv}")
         with urllib.request.urlopen(csv, timeout=300) as r:  # noqa: S310
             raw = r.read()
         buf = io.BytesIO(raw)
         comp = "gzip" if csv.endswith(".gz") else "infer"
-        return pd.read_csv(buf, compression=comp, low_memory=False)
-    print(f"[data] reading {csv}")
-    return pd.read_csv(csv, low_memory=False)
+        return pd.read_csv(buf, compression=comp, low_memory=False, nrows=nrows)
+    print(f"[data] reading {csv}" + (f" (first {nrows} rows)" if nrows else ""))
+    return pd.read_csv(csv, low_memory=False, nrows=nrows)
 
 
 def detect_schema(df: pd.DataFrame, label_col: str, group_col: str,
@@ -415,6 +416,110 @@ def synthetic(n_cells=6000, n_patients=12, n_markers=56, n_classes=28, seed=0):
 
 
 # --------------------------------------------------------------------------- #
+# Dry run — pre-flight checks, no cross-validation (don't burn GPU hours)
+# --------------------------------------------------------------------------- #
+def dry_run(df, args) -> int:
+    import platform
+    ok = True
+    tabpfn_ready = False
+
+    def check(label, passed, detail=""):
+        nonlocal ok
+        mark = "PASS" if passed else "FAIL"
+        if passed is None:
+            mark = "WARN"
+        elif not passed:
+            ok = False
+        print(f"  [{mark}] {label}" + (f" — {detail}" if detail else ""))
+
+    print("=" * 70)
+    print("DRY RUN — pre-flight checks (no cross-validation is run)")
+    print("=" * 70)
+    print(f"\npython {platform.python_version()} on {platform.system()} "
+          f"{platform.machine()}")
+
+    # --- libraries / models ------------------------------------------------ #
+    print("\n[1] libraries & models")
+    specs = build_registry(args.context)
+    for s in specs:
+        check(f"model `{s.name}`", True if s.available else None,
+              s.note if not s.available else s.note or "available")
+
+    # --- compute ----------------------------------------------------------- #
+    print("\n[2] compute")
+    try:
+        import torch
+        cuda = torch.cuda.is_available()
+        check("torch import", True, f"{torch.__version__}")
+        check("CUDA GPU", None if not cuda else True,
+              "available" if cuda else "no GPU — TabPFN will be slow on CPU")
+        if cuda:
+            print(f"        device: {torch.cuda.get_device_name(0)}")
+    except Exception as e:
+        check("torch import", None, f"{type(e).__name__}: {e} (baselines still run)")
+
+    # --- TabPFN weight cache ---------------------------------------------- #
+    print("\n[3] TabPFN weights (gated HuggingFace checkpoint)")
+    print(f"        HF_HOME={os.environ.get('HF_HOME', '(default ~/.cache/huggingface)')}"
+          f"  HF_HUB_OFFLINE={os.environ.get('HF_HUB_OFFLINE', '0')}")
+    try:
+        from tabpfn import TabPFNClassifier
+        Xt = np.random.RandomState(0).randn(32, 4)
+        yt = (Xt[:, 0] > 0).astype(int)
+        TabPFNClassifier(device="cpu").fit(Xt, yt).predict(Xt[:2])
+        check("TabPFN checkpoint loads", True, "cached/reachable")
+        tabpfn_ready = True
+    except Exception as e:
+        check("TabPFN checkpoint loads", None,
+              f"{type(e).__name__}: {str(e).splitlines()[0][:120]} "
+              "(run prefetch_tabpfn.py on a login node)")
+
+    # --- data -------------------------------------------------------------- #
+    print("\n[4] data & schema" + (f" (sampled {args.sample_rows} rows)"
+                                    if args.sample_rows else ""))
+    have_label = args.label_col in df.columns
+    have_group = args.group_col in df.columns
+    check(f"label column `{args.label_col}`", have_label,
+          "" if have_label else f"not found in {list(df.columns)[:20]}")
+    check(f"group column `{args.group_col}`", have_group,
+          "" if have_group else "(needed for patient-grouped splits)")
+    if not have_label:
+        print("\nRESULT: NOT READY — fix the label column.")
+        return 1
+
+    markers = detect_schema(df, args.label_col, args.group_col, META_COLS_DEFAULT)
+    check("marker columns detected", len(markers) > 0, f"{len(markers)} markers")
+    check("markers within TabPFN 500-feature limit", len(markers) <= 500,
+          f"{len(markers)}")
+    nan_m = int(df[markers].isna().sum().sum()) if markers else 0
+    check("no NaNs in markers", nan_m == 0, f"{nan_m} NaN cells" if nan_m else "clean")
+
+    n_cells = len(df)
+    n_classes = df[args.label_col].nunique()
+    supp = df[args.label_col].value_counts()
+    print(f"        cells={n_cells}  classes={n_classes}  "
+          f"rarest='{supp.index[-1]}' (n={int(supp.iloc[-1])})  "
+          f"most common='{supp.index[0]}' (n={int(supp.iloc[0])})")
+    check("class count vs TabPFN 10-class head", None if n_classes > 10 else True,
+          f"{n_classes} classes → ManyClassClassifier required (tabpfn_manyclass)"
+          if n_classes > 10 else f"{n_classes} ≤ 10")
+    if have_group:
+        n_groups = df[args.group_col].nunique()
+        check(f"folds ({args.folds}) ≤ groups ({n_groups})", args.folds <= n_groups,
+              "" if args.folds <= n_groups else "reduce --folds")
+        ctx = min(args.context, int(n_cells * (n_groups - 1) / n_groups))
+        print(f"        groups={n_groups}  ~context/fold={ctx} "
+              f"(cap --context={args.context})  cells>context={n_cells > args.context}")
+
+    tp = "TabPFN ready" if tabpfn_ready else "TabPFN needs weights cached (see [3])"
+    print("\n" + "=" * 70)
+    print(f"RESULT: {'READY' if ok else 'ISSUES ABOVE'} — baselines can run; {tp}. "
+          "No CV was executed.")
+    print("=" * 70)
+    return 0 if ok else 2
+
+
+# --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", help="path or http(s) URL to the single-cell CSV (.csv/.csv.gz)")
@@ -428,15 +533,22 @@ def main():
     ap.add_argument("--out", default="results")
     ap.add_argument("--leakage-check", action="store_true",
                     help="also run a random (cell-level) split to quantify leakage")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="pre-flight checks only (env, data, weights) — no CV")
+    ap.add_argument("--sample-rows", type=int, default=0,
+                    help="read only the first N rows (fast --dry-run on huge files)")
     args = ap.parse_args()
 
     if args.smoke:
         print("[mode] SMOKE — synthetic fixture (no external data)")
         df = synthetic()
     elif args.csv:
-        df = load_table(args.csv)
+        df = load_table(args.csv, nrows=args.sample_rows or None)
     else:
         ap.error("provide --csv PATH/URL or --smoke")
+
+    if args.dry_run:
+        raise SystemExit(dry_run(df, args))
 
     if args.label_col not in df.columns:
         raise SystemExit(f"label column {args.label_col!r} not found; "

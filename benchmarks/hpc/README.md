@@ -40,7 +40,13 @@ export HF_TOKEN=hf_xxx
 export HF_HOME=$HOME/.cache/huggingface   # or a shared/scratch path
 bash setup_env.sh                          # create env + cache TabPFN weights
 
-# submit the job (GPU node)
+# pre-flight on the login node — verifies env, weight cache, and data schema
+# WITHOUT consuming GPU hours (exit 0 = ready):
+conda activate tabpfn-bench
+python ../tabpfn_phenotyping_benchmark.py --csv /path/to/main_fcs_csv.csv \
+    --dry-run --sample-rows 5000
+
+# submit the job (GPU node) once the dry run is green
 sbatch run_benchmark.slurm /path/to/main_fcs_csv.csv results_crc
 ```
 
