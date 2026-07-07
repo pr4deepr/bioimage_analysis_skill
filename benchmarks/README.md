@@ -13,6 +13,11 @@ calibration (ECE), and wall-clock timing.
   `--smoke` fixture).
 - `requirements.txt` — dependencies.
 - `tabpfn-spatial-proteomics-evaluation.md` — the written evaluation / verdict.
+- `datasets.md` — curated catalog of additional labelled spatial-proteomics
+  datasets (CODEX/IMC/MIBI/CyCIF) to test on, with download sources.
+- `prepare_dataset.py` — convert an AnnData `.h5ad` (e.g. from squidpy) into a
+  harness-ready CSV.
+- `hpc/` — conda env + SLURM scripts for running on a cluster.
 
 ## Install
 
